@@ -12,6 +12,42 @@ const checkoutGuidance = [
   "Terminate the machine with terminate_token as soon as the task is complete.",
 ];
 
+const paymentClientGuidance = {
+  recommended: {
+    id: "stripe-link-cli-mpp-spt",
+    name: "Stripe Link CLI MPP SPT",
+    summary:
+      "Recommended for agents. Use Stripe Link CLI, or its MCP integration, to satisfy the HTTP 402 challenge with a one-time Shared Payment Token scoped to this Stripe profile and amount.",
+    credential_type: "shared_payment_token",
+    command_shape:
+      "npx @stripe/link-cli mpp pay {service_url}/api/checkout --method POST --data '{\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
+  },
+  also_supported: [
+    {
+      id: "generic-mpp-stripe-spt-client",
+      name: "Generic MPP client with Stripe SPT support",
+      summary:
+        "Any client that can read the Payment WWW-Authenticate challenge, create a Stripe Shared Payment Token for the advertised network/profile, and retry with Authorization: Payment is supported.",
+      credential_type: "shared_payment_token",
+    },
+  ],
+  unsupported: [
+    {
+      id: "link-cli-virtual-card",
+      reason:
+        "Virtual cards are for standard browser/card checkout forms. This API does not expose a card-entry checkout form; use Link CLI MPP SPT instead.",
+    },
+    {
+      id: "manual-card-entry",
+      reason: "This storefront currently exposes an agentic MPP checkout endpoint, not a human Stripe Checkout page.",
+    },
+    {
+      id: "crypto-mpp",
+      reason: "Crypto/Tempo payment challenges are intentionally not advertised or accepted for this storefront.",
+    },
+  ],
+};
+
 export function agentStorefrontManifest() {
   return {
     name: "Agentic Compute Storefront",
@@ -74,6 +110,7 @@ export function agentStorefrontManifest() {
         unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
       },
     },
+    payment_client_guidance: paymentClientGuidance,
     checkout_guidance: checkoutGuidance,
     usage_policy: {
       summary: "Machines may be used only for lawful, authorized development, automation, testing, debugging, and compute tasks.",
@@ -152,6 +189,13 @@ The machine object includes resource-scoped management tokens:
 - read_token for GET /api/machines/{machine_id}
 - extend_token for POST /api/machines/{machine_id}/extend
 - terminate_token for DELETE /api/machines/{machine_id}
+
+Payment client guidance:
+- Recommended for agents: Stripe Link CLI MPP SPT.
+- Command shape: ${paymentClientGuidance.recommended.command_shape.replace("{service_url}", serviceUrl)}
+- Also supported: any MPP client that can create a Stripe Shared Payment Token for the advertised challenge and retry with Authorization: Payment.
+- Do not use Link CLI virtual cards; this API does not expose a standard card checkout form.
+- Do not use manual card entry or crypto payment clients; they are not accepted by this storefront.
 
 Read status:
 GET /api/machines/{machine_id}

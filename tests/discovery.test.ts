@@ -10,6 +10,8 @@ describe("agent discovery", () => {
     assert.ok(text.includes("POST /api/checkout"));
     assert.match(text, /HTTP 402/);
     assert.match(text, /Stripe-backed MPP payment credential/);
+    assert.match(text, /Stripe Link CLI MPP SPT/);
+    assert.match(text, /Do not use Link CLI virtual cards/);
     assert.match(text, /Acceptable use/);
     assert.match(text, /Do not use machines for: Spam/);
     assert.match(text, /read_token/);
@@ -25,6 +27,8 @@ describe("agent discovery", () => {
     assert.equal(manifest.payments.protocol, "mpp");
     assert.equal(manifest.payments.processor, "stripe");
     assert.deepEqual(manifest.payments.methods, ["stripe-spt"]);
+    assert.equal(manifest.payment_client_guidance.recommended.id, "stripe-link-cli-mpp-spt");
+    assert.ok(manifest.payment_client_guidance.unsupported.some((item) => item.id === "link-cli-virtual-card"));
     assert.equal(manifest.acceptable_use_url, "http://localhost:3000/acceptable-use");
     assert.ok(manifest.checkout_guidance.some((item) => item.includes("HTTP 402")));
     assert.ok(manifest.usage_policy.prohibited_uses.some((item) => item.includes("Spam")));

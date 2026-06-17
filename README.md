@@ -46,6 +46,16 @@ Paid checkout is exposed at `POST /api/checkout`. It follows the MPP pattern use
 
 For Stripe SPT/card-style MPP payments, create a Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_test_...` value in test mode or the `profile_...` value in live mode. Use a matching `STRIPE_SECRET_KEY`: `sk_test_...` for sandbox checkout, `sk_live_...` for real payments. The default accepted SPT-backed payment methods are `card,link`.
 
+Recommended agent payment path is Stripe Link CLI using an MPP Shared Payment Token:
+
+```bash
+npx @stripe/link-cli mpp pay http://localhost:3000/api/checkout \
+  --method POST \
+  --data '{"duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}'
+```
+
+Any MPP client that can create a Stripe SPT for the advertised challenge and retry with `Authorization: Payment ...` should work. Link CLI virtual cards and manual card entry are not supported because this storefront exposes an agentic MPP endpoint, not a browser card checkout form. Crypto MPP is intentionally not accepted.
+
 Checkout is subject to [acceptable use](ACCEPTABLE_USE.md), also served for live agents at `/acceptable-use`. Machines are for lawful, authorized development, automation, testing, debugging, and compute tasks. Do not use leased machines for spam, phishing, unauthorized scanning or exploitation, denial-of-service activity, malware, botnets, cryptojacking, cryptocurrency mining, illegal content, sanctions evasion, or platform safety bypasses.
 
 To use Hetzner for real provisioning:
