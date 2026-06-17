@@ -32,33 +32,56 @@ export class HetznerProvider implements ComputeProvider {
   ) {}
 
   async provision(lease: MachineLease): Promise<ProvisionedMachine> {
-    const sshKey = await this.request<{ ssh_key: { id: number } }>("POST", "/ssh_keys", {
-      name: `storefront-${lease.id}`,
-      public_key: lease.sshPublicKey,
-    });
-    const server = await this.request<{
-      server: { id: number; public_net?: { ipv4?: { ip?: string } } };
-    }>("POST", "/servers", {
-      name: `lease-${lease.id}`,
-      server_type: this.product.serverType,
-      image: this.product.image,
-      location: this.product.location,
-      ssh_keys: [sshKey.ssh_key.id],
-      labels: {
-        managed_by: "agentic-storefront",
-        lease_id: lease.id,
-        product: lease.productId,
-      },
-    });
-    const serverId = String(server.server.id);
-    const host = server.server.public_net?.ipv4?.ip ?? (await this.waitForIpv4(serverId));
+    let sshKeyId: string | null = null;
+    let firewallId: string | null = null;
+    let serverId: string | null = null;
 
-    return {
-      providerServerId: serverId,
-      providerSshKeyId: String(sshKey.ssh_key.id),
-      host,
-      username: this.product.username,
-    };
+    try {
+      const sshKey = await this.request<{ ssh_key: { id: number } }>("POST", "/ssh_keys", {
+        name: `storefront-${lease.id}`,
+        public_key: lease.sshPublicKey,
+      });
+      sshKeyId = String(sshKey.ssh_key.id);
+
+      const firewall = await this.request<{ firewall: { id: number } }>("POST", "/firewalls", {
+        name: `lease-${lease.id}-ssh-only`,
+        rules: [
+          {
+            direction: "in",
+            protocol: "tcp",
+            port: "22",
+            source_ips: ["0.0.0.0/0", "::/0"],
+          },
+        ],
+        labels: leaseLabels(lease),
+      });
+      firewallId = String(firewall.firewall.id);
+
+      const server = await this.request<{
+        server: { id: number; public_net?: { ipv4?: { ip?: string } } };
+      }>("POST", "/servers", {
+        name: `lease-${lease.id}`,
+        server_type: this.product.serverType,
+        image: this.product.image,
+        location: this.product.location,
+        ssh_keys: [Number(sshKeyId)],
+        firewalls: [{ firewall: Number(firewallId) }],
+        labels: leaseLabels(lease),
+      });
+      serverId = String(server.server.id);
+      const host = server.server.public_net?.ipv4?.ip ?? (await this.waitForIpv4(serverId));
+
+      return {
+        providerServerId: serverId,
+        providerSshKeyId: sshKeyId,
+        providerFirewallId: firewallId,
+        host,
+        username: this.product.username,
+      };
+    } catch (error) {
+      await this.cleanupPartialProvision({ serverId, sshKeyId, firewallId });
+      throw error;
+    }
   }
 
   async terminate(lease: MachineLease): Promise<void> {
@@ -67,6 +90,9 @@ export class HetznerProvider implements ComputeProvider {
     }
     if (lease.providerSshKeyId) {
       await this.request("DELETE", `/ssh_keys/${lease.providerSshKeyId}`, undefined, true);
+    }
+    if (lease.providerFirewallId) {
+      await this.deleteFirewall(lease.providerFirewallId);
     }
   }
 
@@ -111,6 +137,36 @@ export class HetznerProvider implements ComputeProvider {
     }
     return (await response.json()) as T;
   }
+
+  private async cleanupPartialProvision(ids: {
+    serverId: string | null;
+    sshKeyId: string | null;
+    firewallId: string | null;
+  }): Promise<void> {
+    if (ids.serverId) {
+      await this.request("DELETE", `/servers/${ids.serverId}`, undefined, true).catch(() => undefined);
+    }
+    if (ids.sshKeyId) {
+      await this.request("DELETE", `/ssh_keys/${ids.sshKeyId}`, undefined, true).catch(() => undefined);
+    }
+    if (ids.firewallId) {
+      await this.deleteFirewall(ids.firewallId).catch(() => undefined);
+    }
+  }
+
+  private async deleteFirewall(id: string): Promise<void> {
+    let lastError: unknown;
+    for (let attempt = 0; attempt < 6; attempt += 1) {
+      try {
+        await this.request("DELETE", `/firewalls/${id}`, undefined, true);
+        return;
+      } catch (error) {
+        lastError = error;
+        await delay(1000);
+      }
+    }
+    throw lastError;
+  }
 }
 
 export function buildProvider(settings: Settings): ComputeProvider {
@@ -127,3 +183,10 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function leaseLabels(lease: MachineLease): Record<string, string> {
+  return {
+    managed_by: "agentic-storefront",
+    lease_id: lease.id,
+    product: lease.productId,
+  };
+}

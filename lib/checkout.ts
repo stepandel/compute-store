@@ -43,6 +43,15 @@ export function createMppCheckout(): MppCheckout {
   if (!settings.checkout.mppSecretKey) {
     throw new CheckoutConfigurationError("MPP_SECRET_KEY is required before paid checkout can accept MPP payments.");
   }
+  if (
+    settings.provider !== "dry-run" &&
+    settings.checkout.stripeSecretKey?.startsWith("sk_test_") &&
+    !settings.allowTestPaymentsWithRealProvider
+  ) {
+    throw new CheckoutConfigurationError(
+      "Refusing to create real provider resources with Stripe test-mode payments. Set ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER=true only for a controlled infrastructure test.",
+    );
+  }
   if (!configured.methods.length) {
     throw new CheckoutConfigurationError(
       "Configure STRIPE_SECRET_KEY and STRIPE_PROFILE_ID before paid checkout can accept real Stripe payments.",

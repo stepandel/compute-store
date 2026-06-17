@@ -13,7 +13,14 @@ export interface LeaseStoreBackend {
   createCapabilityTokens(tokens: LeaseCapabilityToken[]): Promise<void>;
   getCapabilityTokenByHash(tokenHash: string): Promise<LeaseCapabilityToken | null>;
   get(id: string): Promise<MachineLease | null>;
-  markActive(id: string, providerServerId: string, host: string, username: string, providerSshKeyId?: string): Promise<void>;
+  markActive(
+    id: string,
+    providerServerId: string,
+    host: string,
+    username: string,
+    providerSshKeyId?: string,
+    providerFirewallId?: string,
+  ): Promise<void>;
   markFailed(id: string, reason: string): Promise<void>;
   markTerminating(id: string): Promise<MachineLease | null>;
   markTerminated(id: string): Promise<void>;
@@ -48,11 +55,19 @@ export class FileLeaseStore implements LeaseStoreBackend {
     return data.machines.find((lease) => lease.id === id) ?? null;
   }
 
-  async markActive(id: string, providerServerId: string, host: string, username: string, providerSshKeyId?: string) {
+  async markActive(
+    id: string,
+    providerServerId: string,
+    host: string,
+    username: string,
+    providerSshKeyId?: string,
+    providerFirewallId?: string,
+  ) {
     await this.patch(id, {
       status: "active",
       providerServerId,
       providerSshKeyId: providerSshKeyId ?? null,
+      providerFirewallId: providerFirewallId ?? null,
       host,
       username,
       failureReason: null,
@@ -169,11 +184,19 @@ export class RedisRestLeaseStore implements LeaseStoreBackend {
     return data.machines.find((lease) => lease.id === id) ?? null;
   }
 
-  async markActive(id: string, providerServerId: string, host: string, username: string, providerSshKeyId?: string) {
+  async markActive(
+    id: string,
+    providerServerId: string,
+    host: string,
+    username: string,
+    providerSshKeyId?: string,
+    providerFirewallId?: string,
+  ) {
     await this.patch(id, {
       status: "active",
       providerServerId,
       providerSshKeyId: providerSshKeyId ?? null,
+      providerFirewallId: providerFirewallId ?? null,
       host,
       username,
       failureReason: null,

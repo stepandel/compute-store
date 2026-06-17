@@ -20,6 +20,7 @@ export type Settings = {
   provider: ProviderName;
   hetznerApiToken?: string;
   allowUnpaidMachineCreate: boolean;
+  allowTestPaymentsWithRealProvider: boolean;
   product: Product;
   checkout: CheckoutSettings;
 };
@@ -78,6 +79,7 @@ export function loadSettings(): Settings {
     provider,
     hetznerApiToken: process.env.HETZNER_API_TOKEN,
     allowUnpaidMachineCreate: process.env.ALLOW_UNPAID_MACHINE_CREATE === "true" || provider === "dry-run",
+    allowTestPaymentsWithRealProvider: process.env.ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER === "true",
     product,
     checkout: {
       baseFeeCents,

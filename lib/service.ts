@@ -42,6 +42,7 @@ export class MachineService {
       provider: this.providerName,
       providerServerId: null,
       providerSshKeyId: null,
+      providerFirewallId: null,
       status: "provisioning",
       sshPublicKey: request.sshPublicKey,
       host: null,
@@ -139,6 +140,7 @@ export class MachineService {
           ...freshLease,
           providerServerId: machine.providerServerId,
           providerSshKeyId: machine.providerSshKeyId ?? null,
+          providerFirewallId: machine.providerFirewallId ?? null,
           host: machine.host,
           username: machine.username,
         });
@@ -151,6 +153,7 @@ export class MachineService {
         machine.host,
         machine.username,
         machine.providerSshKeyId,
+        machine.providerFirewallId,
       );
     } catch (error) {
       await this.store.markFailed(id, errorMessage(error));

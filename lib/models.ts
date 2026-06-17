@@ -9,6 +9,7 @@ export type CreateMachineRequest = {
 export type ProvisionedMachine = {
   providerServerId: string;
   providerSshKeyId?: string;
+  providerFirewallId?: string;
   host: string;
   username: string;
 };
@@ -19,6 +20,7 @@ export type MachineLease = {
   provider: string;
   providerServerId: string | null;
   providerSshKeyId: string | null;
+  providerFirewallId: string | null;
   status: MachineStatus;
   sshPublicKey: string;
   host: string | null;

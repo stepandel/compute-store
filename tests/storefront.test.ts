@@ -161,6 +161,7 @@ describe("compute storefront", () => {
       provider: "dry-run",
       providerServerId: "dryrun-machine_expired",
       providerSshKeyId: null,
+      providerFirewallId: null,
       status: "active",
       sshPublicKey: VALID_KEY,
       host: "203.0.113.10",
