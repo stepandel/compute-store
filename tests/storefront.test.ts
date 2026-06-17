@@ -87,6 +87,18 @@ describe("compute storefront", () => {
     assert.equal(readable.id, lease.id);
   });
 
+  it("returns missing machines before validating capabilities", async () => {
+    const missingId = "machine_0000000000000000";
+
+    const missingRead = await service.getMachine(missingId, "");
+    const missingTerminate = await service.terminateMachine(missingId, "not-a-real-token");
+    const missingExtend = await service.extendMachine(missingId, "not-a-real-token", 15);
+
+    assert.equal(missingRead, null);
+    assert.equal(missingTerminate, null);
+    assert.equal(missingExtend, null);
+  });
+
   it("terminates a machine", async () => {
     const { lease, management } = await service.createMachine({
       durationMinutes: 60,

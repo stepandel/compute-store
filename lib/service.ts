@@ -60,8 +60,12 @@ export class MachineService {
 
   async getMachine(id: string, bearerToken: string): Promise<MachineLease | null> {
     await this.expireDueMachines();
+    const lease = await this.store.get(id);
+    if (!lease) {
+      return null;
+    }
     await this.authorize(id, bearerToken, "read");
-    return this.store.get(id);
+    return lease;
   }
 
   async extendMachine(id: string, bearerToken: string, additionalMinutes: number): Promise<MachineLease | null> {
@@ -88,6 +92,10 @@ export class MachineService {
   }
 
   async terminateMachine(id: string, bearerToken?: string): Promise<MachineLease | null> {
+    const existingLease = await this.store.get(id);
+    if (!existingLease) {
+      return null;
+    }
     if (bearerToken) {
       await this.authorize(id, bearerToken, "terminate");
     }
