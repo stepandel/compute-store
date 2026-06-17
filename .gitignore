@@ -1,0 +1,12 @@
+node_modules/
+.next/
+out/
+coverage/
+*.sqlite3
+*.sqlite3-*
+.env
+.env.*
+!.env.example
+__pycache__/
+*.py[cod]
+
