@@ -1,9 +1,8 @@
 import Stripe from "stripe";
-import { Mppx, stripe as mppStripe, tempo } from "mppx/server";
+import { Mppx, stripe as mppStripe } from "mppx/server";
 import { loadSettings, type CheckoutSettings } from "@/lib/config";
 import type { CreateMachineRequest } from "@/lib/models";
 
-const TEMPO_USD_TESTNET = "0x20c0000000000000000000000000000000000000";
 const TEN_MINUTES_MS = 10 * 60 * 1000;
 
 export class CheckoutConfigurationError extends Error {}
@@ -18,7 +17,6 @@ export type CheckoutQuote = {
 };
 
 export type MppCheckout = {
-  enabledMethods: Array<"stripe" | "tempo">;
   payment: ReturnType<typeof Mppx.create>;
 };
 
@@ -45,12 +43,11 @@ export function createMppCheckout(): MppCheckout {
   }
   if (!configured.methods.length) {
     throw new CheckoutConfigurationError(
-      "Configure STRIPE_SECRET_KEY and STRIPE_PROFILE_ID, or TEMPO_RECIPIENT_ADDRESS, before paid checkout can accept MPP payments.",
+      "Configure STRIPE_SECRET_KEY and STRIPE_PROFILE_ID before paid checkout can accept real Stripe payments.",
     );
   }
 
   return {
-    enabledMethods: configured.enabledMethods,
     payment: Mppx.create({
       methods: configured.methods,
       secretKey: settings.checkout.mppSecretKey,
@@ -59,20 +56,22 @@ export function createMppCheckout(): MppCheckout {
 }
 
 export function checkoutComposeEntries(checkout: MppCheckout, quote: CheckoutQuote) {
-  return checkout.enabledMethods.map((method) => [
-    `${method}/charge`,
-    {
-      amount: quote.amount,
-      description: `${quote.duration_minutes} minute ${quote.product_id} lease`,
-      expires: checkoutChallengeExpires(),
-      meta: {
-        product_id: quote.product_id,
-        duration_minutes: String(quote.duration_minutes),
-        amount_cents: String(quote.amount_cents),
+  return [
+    [
+      "stripe/charge",
+      {
+        amount: quote.amount,
+        description: `${quote.duration_minutes} minute ${quote.product_id} lease`,
+        expires: checkoutChallengeExpires(),
+        meta: {
+          product_id: quote.product_id,
+          duration_minutes: String(quote.duration_minutes),
+          amount_cents: String(quote.amount_cents),
+        },
+        scope: "checkout:create-machine",
       },
-      scope: "checkout:create-machine",
-    },
-  ]) as Parameters<MppCheckout["payment"]["compose"]>;
+    ],
+  ] as Parameters<MppCheckout["payment"]["compose"]>;
 }
 
 export function checkoutChallengeExpires(): Date {
@@ -80,15 +79,16 @@ export function checkoutChallengeExpires(): Date {
 }
 
 function buildPaymentMethods(settings: CheckoutSettings) {
-  const methods = [];
-  const enabledMethods: Array<"stripe" | "tempo"> = [];
+  if (!settings.stripeSecretKey || !settings.stripeProfileId) {
+    return { methods: [] };
+  }
 
-  if (settings.stripeSecretKey && settings.stripeProfileId) {
-    const stripeClient = new Stripe(settings.stripeSecretKey, {
-      apiVersion: "2026-05-27.dahlia",
-    });
+  const stripeClient = new Stripe(settings.stripeSecretKey, {
+    apiVersion: "2026-05-27.dahlia",
+  });
 
-    methods.push(
+  return {
+    methods: [
       mppStripe.charge({
         client: stripeClient,
         networkId: settings.stripeProfileId,
@@ -96,25 +96,7 @@ function buildPaymentMethods(settings: CheckoutSettings) {
         decimals: 2,
         paymentMethodTypes: settings.stripePaymentMethodTypes,
       }),
-    );
-    enabledMethods.push("stripe");
-  }
-
-  if (settings.tempoRecipientAddress) {
-    methods.push(
-      tempo.charge({
-        currency: TEMPO_USD_TESTNET,
-        decimals: 6,
-        recipient: settings.tempoRecipientAddress,
-        testnet: settings.tempoTestnet,
-      }),
-    );
-    enabledMethods.push("tempo");
-  }
-
-  return {
-    enabledMethods,
-    methods,
+    ],
   };
 }
 

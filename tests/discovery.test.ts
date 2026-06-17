@@ -20,6 +20,8 @@ describe("agent discovery", () => {
     assert.equal(manifest.products[0].id, "bare-linux-machine");
     assert.equal(manifest.auth.type, "lease_capability_tokens");
     assert.equal(manifest.payments.protocol, "mpp");
+    assert.equal(manifest.payments.processor, "stripe");
+    assert.deepEqual(manifest.payments.methods, ["stripe-spt"]);
     assert.equal(manifest.endpoints.checkout.path, "/api/checkout");
     assert.equal(manifest.endpoints.read.auth, "Bearer <read_token>");
     assert.equal(manifest.openapi_url, "/openapi.json");

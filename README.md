@@ -41,11 +41,9 @@ Generate `MPP_SECRET_KEY` with:
 openssl rand -base64 32
 ```
 
-Paid checkout is exposed at `POST /api/checkout`. It follows the MPP pattern used by agentic checkout examples such as PostalForm and Prospect Butcher Co.: submit the order details, receive an HTTP `402` payment challenge if no credential is present, retry with an MPP payment credential, and then receive the fulfilled resource.
+Paid checkout is exposed at `POST /api/checkout`. It follows the MPP pattern used by agentic checkout examples such as PostalForm and Prospect Butcher Co.: submit the order details, receive an HTTP `402` payment challenge if no credential is present, retry with a Stripe-backed MPP payment credential, and then receive the fulfilled resource.
 
-For Stripe SPT/card-style MPP payments, create a Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_test_...` or `profile_...` value. The default accepted SPT-backed payment methods are `card,link`.
-
-Tempo USDC MPP payments are optional. Set `TEMPO_RECIPIENT_ADDRESS=0x...` to advertise a Tempo challenge as well. `TEMPO_TESTNET=true` is the default for local development.
+For Stripe SPT/card-style MPP payments, create a Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_test_...` value in test mode or the `profile_...` value in live mode. Use a matching `STRIPE_SECRET_KEY`: `sk_test_...` for sandbox checkout, `sk_live_...` for real payments. The default accepted SPT-backed payment methods are `card,link`.
 
 To use Hetzner for real provisioning:
 

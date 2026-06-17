@@ -53,9 +53,10 @@ export function agentStorefrontManifest() {
     ],
     payments: {
       protocol: "mpp",
+      processor: "stripe",
       checkout_path: "/api/checkout",
       challenge_status: 402,
-      methods: ["stripe-spt", "tempo-usdc"],
+      methods: ["stripe-spt"],
       pricing: {
         currency: "usd",
         unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
