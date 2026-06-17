@@ -1,29 +1,29 @@
-# Agentic Compute Storefront Prototype
+# Agentic Compute Storefront
 
-A minimal storefront API for renting one product: a temporary bare Linux machine.
+A small Next.js + TypeScript storefront for leasing one product: a temporary bare Linux machine.
 
-The prototype is intentionally narrow:
+The app is intentionally narrow:
 
 - One product: `bare-linux-machine`
 - One request shape: duration plus SSH public key
-- One lifecycle: create, poll, terminate, auto-expire
-- One persistence layer: SQLite
+- One lifecycle: create, poll, terminate, expire
+- One local persistence layer: JSON file storage
 - One safe default provider: dry-run, which simulates provisioning
 - Optional real provider: Hetzner Cloud, enabled explicitly with env vars
 
 ## Run
 
 ```bash
-python3 -m storefront.server
+npm install
+npm run dev
 ```
 
-The server listens on `http://127.0.0.1:8080` by default.
+Open `http://localhost:3000`.
 
 Useful env vars:
 
 ```bash
-PORT=8080
-DATABASE_PATH=storefront.sqlite3
+DATA_PATH=data/machines.json
 PROVIDER=dry-run
 ```
 
@@ -32,7 +32,7 @@ To use Hetzner for real provisioning:
 ```bash
 PROVIDER=hetzner
 HETZNER_API_TOKEN=...
-python3 -m storefront.server
+npm run dev
 ```
 
 The Hetzner adapter is configured for a small Ubuntu machine:
@@ -49,7 +49,7 @@ The next hardening step is to attach a per-lease firewall that allows inbound SS
 Create a machine:
 
 ```bash
-curl -s http://127.0.0.1:8080/machines \
+curl -s http://localhost:3000/api/machines \
   -H 'content-type: application/json' \
   -d '{
     "duration_minutes": 60,
@@ -60,39 +60,50 @@ curl -s http://127.0.0.1:8080/machines \
 Get machine status:
 
 ```bash
-curl -s http://127.0.0.1:8080/machines/<machine_id>
+curl -s http://localhost:3000/api/machines/<machine_id>
 ```
 
 Terminate early:
 
 ```bash
-curl -X DELETE -s http://127.0.0.1:8080/machines/<machine_id>
+curl -X DELETE -s http://localhost:3000/api/machines/<machine_id>
+```
+
+Expire due leases:
+
+```bash
+curl -X POST -s http://localhost:3000/api/machines/expire
 ```
 
 Health check:
 
 ```bash
-curl -s http://127.0.0.1:8080/health
+curl -s http://localhost:3000/api/health
 ```
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-  A["Agent"] --> B["POST /machines"]
+  A["Agent or UI"] --> B["Next.js API Routes"]
   B --> C["Validate duration + SSH key"]
-  C --> D["Create lease in SQLite"]
+  C --> D["Create lease in JSON store"]
   D --> E["Provider creates server"]
-  E --> F["Store host + provider id"]
-  F --> G["GET /machines/:id returns access info"]
-  D --> H["Expiry worker"]
+  E --> F["Store host + provider ids"]
+  F --> G["GET /api/machines/:id returns access info"]
+  B --> H["Opportunistic expiry"]
   H --> I["Provider terminates expired server"]
 ```
+
+There is no required resident worker. Expiry runs opportunistically during create/get flows and can also be triggered through `POST /api/machines/expire`, which is suitable for a cron job later.
 
 The agent never receives cloud-provider credentials. It only receives the leased machine host and SSH command.
 
 ## Tests
 
 ```bash
-python3 -m unittest
+npm run typecheck
+npm test
+npm run build
 ```
+
