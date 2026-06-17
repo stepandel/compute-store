@@ -59,7 +59,8 @@ export function agentStorefrontManifest() {
       methods: ["stripe-spt"],
       pricing: {
         currency: "usd",
-        unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
+        base_fee_cents: Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99),
+        unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 2),
       },
     },
     endpoints: {
@@ -423,6 +424,7 @@ export function openApiDocument() {
           required: [
             "product_id",
             "duration_minutes",
+            "base_fee_cents",
             "unit_price_cents_per_minute",
             "amount_cents",
             "amount",
@@ -435,6 +437,7 @@ export function openApiDocument() {
               minimum: product.minDurationMinutes,
               maximum: product.maxDurationMinutes,
             },
+            base_fee_cents: { type: "integer", minimum: 0 },
             unit_price_cents_per_minute: { type: "integer", minimum: 1 },
             amount_cents: { type: "integer", minimum: 1 },
             amount: { type: "string", pattern: "^\\d+\\.\\d{2}$" },

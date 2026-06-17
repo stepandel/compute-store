@@ -32,7 +32,8 @@ MPP_SECRET_KEY=replace-with-random-base64-secret
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_PROFILE_ID=profile_test_...
 STRIPE_PAYMENT_METHOD_TYPES=card,link
-PRICE_CENTS_PER_MINUTE=5
+CHECKOUT_BASE_FEE_CENTS=99
+PRICE_CENTS_PER_MINUTE=2
 ```
 
 Generate `MPP_SECRET_KEY` with:
@@ -53,11 +54,11 @@ HETZNER_API_TOKEN=...
 bun run dev
 ```
 
-The Hetzner adapter is configured for a small Ubuntu machine:
+The Hetzner adapter is configured for a small EU Ubuntu machine:
 
-- Server type: `cx22`
+- Server type: `cx23`
 - Image: `ubuntu-24.04`
-- Location: `fsn1`
+- Location: `fsn1` in Falkenstein, Germany
 - Access: the provided SSH public key is attached at provision time
 
 The next hardening step is to attach a per-lease firewall that allows inbound SSH and denies other inbound traffic.
@@ -92,9 +93,10 @@ Without an MPP credential, the response is `402 Payment Required` with `WWW-Auth
     "quote": {
       "product_id": "bare-linux-machine",
       "duration_minutes": 60,
-      "unit_price_cents_per_minute": 5,
-      "amount_cents": 300,
-      "amount": "3.00",
+      "base_fee_cents": 99,
+      "unit_price_cents_per_minute": 2,
+      "amount_cents": 219,
+      "amount": "2.19",
       "currency": "usd"
     }
   },

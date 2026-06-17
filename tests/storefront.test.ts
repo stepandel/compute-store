@@ -43,15 +43,26 @@ describe("compute storefront", () => {
   });
 
   it("prices checkout by requested lease duration", () => {
-    const quote = quoteCheckout({
-      durationMinutes: 60,
-      sshPublicKey: VALID_KEY,
-    });
+    const originalBaseFee = process.env.CHECKOUT_BASE_FEE_CENTS;
+    const originalMinutePrice = process.env.PRICE_CENTS_PER_MINUTE;
+    delete process.env.CHECKOUT_BASE_FEE_CENTS;
+    delete process.env.PRICE_CENTS_PER_MINUTE;
 
-    assert.equal(quote.currency, "usd");
-    assert.equal(quote.unit_price_cents_per_minute, 5);
-    assert.equal(quote.amount_cents, 300);
-    assert.equal(quote.amount, "3.00");
+    try {
+      const quote = quoteCheckout({
+        durationMinutes: 60,
+        sshPublicKey: VALID_KEY,
+      });
+
+      assert.equal(quote.currency, "usd");
+      assert.equal(quote.base_fee_cents, 99);
+      assert.equal(quote.unit_price_cents_per_minute, 2);
+      assert.equal(quote.amount_cents, 219);
+      assert.equal(quote.amount, "2.19");
+    } finally {
+      restoreEnv("CHECKOUT_BASE_FEE_CENTS", originalBaseFee);
+      restoreEnv("PRICE_CENTS_PER_MINUTE", originalMinutePrice);
+    }
   });
 
   it("rejects durations outside policy", () => {
@@ -184,3 +195,11 @@ describe("compute storefront", () => {
     assert.fail(`Machine ${id} did not reach expected state. Last state: ${lease?.status ?? "missing"}`);
   }
 });
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) {
+    delete process.env[name];
+    return;
+  }
+  process.env[name] = value;
+}

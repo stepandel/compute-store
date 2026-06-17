@@ -10,6 +10,7 @@ export class CheckoutConfigurationError extends Error {}
 export type CheckoutQuote = {
   product_id: string;
   duration_minutes: number;
+  base_fee_cents: number;
   unit_price_cents_per_minute: number;
   amount_cents: number;
   amount: string;
@@ -22,11 +23,12 @@ export type MppCheckout = {
 
 export function quoteCheckout(request: CreateMachineRequest): CheckoutQuote {
   const settings = loadSettings();
-  const amountCents = request.durationMinutes * settings.checkout.priceCentsPerMinute;
+  const amountCents = settings.checkout.baseFeeCents + request.durationMinutes * settings.checkout.priceCentsPerMinute;
 
   return {
     product_id: settings.product.id,
     duration_minutes: request.durationMinutes,
+    base_fee_cents: settings.checkout.baseFeeCents,
     unit_price_cents_per_minute: settings.checkout.priceCentsPerMinute,
     amount_cents: amountCents,
     amount: formatUsdAmount(amountCents),

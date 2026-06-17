@@ -20,6 +20,7 @@ export type Settings = {
 };
 
 export type CheckoutSettings = {
+  baseFeeCents: number;
   priceCentsPerMinute: number;
   currency: "usd";
   mppSecretKey?: string;
@@ -31,7 +32,7 @@ export type CheckoutSettings = {
 export const product: Product = {
   id: "bare-linux-machine",
   defaultProvider: "hetzner",
-  serverType: "cx22",
+  serverType: "cx23",
   image: "ubuntu-24.04",
   location: "fsn1",
   username: "root",
@@ -41,10 +42,11 @@ export const product: Product = {
 
 export function loadSettings(): Settings {
   const provider = (process.env.PROVIDER ?? "dry-run") as ProviderName;
+  const baseFeeCents = parseNonNegativeInteger(process.env.CHECKOUT_BASE_FEE_CENTS, "CHECKOUT_BASE_FEE_CENTS", 99);
   const priceCentsPerMinute = parsePositiveInteger(
     process.env.PRICE_CENTS_PER_MINUTE,
     "PRICE_CENTS_PER_MINUTE",
-    5,
+    2,
   );
 
   if (provider !== "dry-run" && provider !== "hetzner") {
@@ -57,6 +59,7 @@ export function loadSettings(): Settings {
     hetznerApiToken: process.env.HETZNER_API_TOKEN,
     product,
     checkout: {
+      baseFeeCents,
       priceCentsPerMinute,
       currency: "usd",
       mppSecretKey: process.env.MPP_SECRET_KEY,
@@ -65,6 +68,18 @@ export function loadSettings(): Settings {
       stripePaymentMethodTypes: parseCsv(process.env.STRIPE_PAYMENT_METHOD_TYPES, ["card", "link"]),
     },
   };
+}
+
+function parseNonNegativeInteger(value: string | undefined, name: string, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`${name} must be a non-negative integer.`);
+  }
+  return parsed;
 }
 
 function parsePositiveInteger(value: string | undefined, name: string, fallback: number): number {

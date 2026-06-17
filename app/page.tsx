@@ -29,6 +29,7 @@ type CheckoutResponse = {
     quote: {
       amount: string;
       currency: "usd";
+      base_fee_cents: number;
       duration_minutes: number;
       unit_price_cents_per_minute: number;
     };
