@@ -48,6 +48,14 @@ The next hardening step is to attach a per-lease firewall that allows inbound SS
 
 ## API
 
+Agent discovery:
+
+```bash
+curl -s http://localhost:3000/llms.txt
+curl -s http://localhost:3000/.well-known/agent-storefront.json
+curl -s http://localhost:3000/openapi.json
+```
+
 Create a machine:
 
 ```bash
@@ -117,6 +125,8 @@ Vercel Cron invokes the configured path with an HTTP `GET` request and sends `CR
 The JSON store is useful for local prototyping. Before real Vercel production usage, move leases and capability token hashes to durable storage such as Postgres, Redis, or Vercel KV.
 
 The agent never receives cloud-provider credentials. It receives only the leased machine host, SSH command, and resource-scoped capability tokens for that lease. Raw tokens are returned once at create time and stored hashed at rest.
+
+Agents should start with `/llms.txt` for terse operating instructions, then use `/.well-known/agent-storefront.json` or `/openapi.json` for machine-readable endpoint details.
 
 ## Tests
 
