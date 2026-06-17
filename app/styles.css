@@ -75,6 +75,7 @@ h2 {
 
 .machine-form,
 .lookup,
+.token-grid,
 .status-panel {
   background: var(--surface);
   border: 1px solid var(--line);
@@ -135,6 +136,7 @@ textarea:focus {
 .actions {
   display: flex;
   flex-wrap: wrap;
+  align-items: center;
   gap: 10px;
 }
 
@@ -181,6 +183,13 @@ button.danger:hover:not(:disabled) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
+  gap: 12px;
+  padding: 18px;
+}
+
+.token-grid {
+  display: grid;
+  grid-template-columns: 1fr;
   gap: 12px;
   padding: 18px;
 }
@@ -268,6 +277,12 @@ dd {
   font-size: 14px;
 }
 
+.extend-action {
+  display: grid;
+  grid-template-columns: 104px auto;
+  gap: 8px;
+}
+
 @media (max-width: 760px) {
   .shell {
     padding: 20px;
@@ -279,6 +294,10 @@ dd {
 
   .lookup {
     grid-template-columns: 1fr;
+  }
+
+  .extend-action {
+    grid-template-columns: 1fr auto;
   }
 
   .facts {
@@ -295,4 +314,3 @@ dd {
     grid-template-columns: 1fr;
   }
 }
-

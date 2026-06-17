@@ -6,7 +6,8 @@ The app is intentionally narrow:
 
 - One product: `bare-linux-machine`
 - One request shape: duration plus SSH public key
-- One lifecycle: create, poll, terminate, expire
+- One lifecycle: create, poll, extend, terminate, expire
+- Resource-scoped lease capability tokens for management
 - One local persistence layer: JSON file storage
 - One safe default provider: dry-run, which simulates provisioning
 - Optional real provider: Hetzner Cloud, enabled explicitly with env vars
@@ -60,13 +61,24 @@ curl -s http://localhost:3000/api/machines \
 Get machine status:
 
 ```bash
-curl -s http://localhost:3000/api/machines/<machine_id>
+curl -s http://localhost:3000/api/machines/<machine_id> \
+  -H 'authorization: Bearer <read_token>'
+```
+
+Extend a machine:
+
+```bash
+curl -X POST -s http://localhost:3000/api/machines/<machine_id>/extend \
+  -H 'authorization: Bearer <extend_token>' \
+  -H 'content-type: application/json' \
+  -d '{"additional_minutes": 15}'
 ```
 
 Terminate early:
 
 ```bash
-curl -X DELETE -s http://localhost:3000/api/machines/<machine_id>
+curl -X DELETE -s http://localhost:3000/api/machines/<machine_id> \
+  -H 'authorization: Bearer <terminate_token>'
 ```
 
 Expire due leases:
@@ -90,14 +102,15 @@ flowchart TD
   C --> D["Create lease in JSON store"]
   D --> E["Provider creates server"]
   E --> F["Store host + provider ids"]
-  F --> G["GET /api/machines/:id returns access info"]
+  D --> J["Return read / extend / terminate capability tokens"]
+  F --> G["GET /api/machines/:id checks read token"]
   B --> H["Opportunistic expiry"]
   H --> I["Provider terminates expired server"]
 ```
 
 There is no required resident worker. Expiry runs opportunistically during create/get flows and can also be triggered through `POST /api/machines/expire`, which is suitable for a cron job later.
 
-The agent never receives cloud-provider credentials. It only receives the leased machine host and SSH command.
+The agent never receives cloud-provider credentials. It receives only the leased machine host, SSH command, and resource-scoped capability tokens for that lease. Raw tokens are returned once at create time and stored hashed at rest.
 
 ## Tests
 
@@ -106,4 +119,3 @@ npm run typecheck
 npm test
 npm run build
 ```
-

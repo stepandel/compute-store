@@ -14,12 +14,23 @@ type PublicMachine = {
   ssh_command?: string;
   terminated_at?: string;
   failure_reason?: string;
+  management?: ManagementTokens;
+};
+
+type ManagementTokens = {
+  read_token: string;
+  extend_token: string;
+  terminate_token: string;
 };
 
 export default function Home() {
   const [duration, setDuration] = useState("60");
   const [sshKey, setSshKey] = useState("");
   const [machineId, setMachineId] = useState("");
+  const [readToken, setReadToken] = useState("");
+  const [extendToken, setExtendToken] = useState("");
+  const [terminateToken, setTerminateToken] = useState("");
+  const [extendMinutes, setExtendMinutes] = useState("15");
   const [machine, setMachine] = useState<PublicMachine | null>(null);
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
@@ -45,6 +56,11 @@ export default function Home() {
       }
       setMachine(payload);
       setMachineId(payload.machine_id);
+      if (payload.management) {
+        setReadToken(payload.management.read_token);
+        setExtendToken(payload.management.extend_token);
+        setTerminateToken(payload.management.terminate_token);
+      }
     } finally {
       setBusy(false);
     }
@@ -57,7 +73,9 @@ export default function Home() {
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetch(`/api/machines/${id}`);
+      const response = await fetch(`/api/machines/${id}`, {
+        headers: bearerHeaders(readToken),
+      });
       const payload = await response.json();
       if (!response.ok) {
         setMessage(payload.error ?? "Machine not found.");
@@ -77,10 +95,39 @@ export default function Home() {
     setBusy(true);
     setMessage("");
     try {
-      const response = await fetch(`/api/machines/${machine.machine_id}`, { method: "DELETE" });
+      const response = await fetch(`/api/machines/${machine.machine_id}`, {
+        method: "DELETE",
+        headers: bearerHeaders(terminateToken),
+      });
       const payload = await response.json();
       if (!response.ok) {
         setMessage(payload.error ?? "Terminate failed.");
+        return;
+      }
+      setMachine(payload);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function extendMachine() {
+    if (!machine?.machine_id) {
+      return;
+    }
+    setBusy(true);
+    setMessage("");
+    try {
+      const response = await fetch(`/api/machines/${machine.machine_id}/extend`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          ...bearerHeaders(extendToken),
+        },
+        body: JSON.stringify({ additional_minutes: Number(extendMinutes) }),
+      });
+      const payload = await response.json();
+      if (!response.ok) {
+        setMessage(payload.error ?? "Extend failed.");
         return;
       }
       setMachine(payload);
@@ -143,6 +190,21 @@ export default function Home() {
           </button>
         </div>
 
+        <div className="token-grid">
+          <label>
+            <span>Read token</span>
+            <input value={readToken} onChange={(event) => setReadToken(event.target.value)} />
+          </label>
+          <label>
+            <span>Extend token</span>
+            <input value={extendToken} onChange={(event) => setExtendToken(event.target.value)} />
+          </label>
+          <label>
+            <span>Terminate token</span>
+            <input value={terminateToken} onChange={(event) => setTerminateToken(event.target.value)} />
+          </label>
+        </div>
+
         {message ? <p className="message">{message}</p> : null}
 
         {machine ? (
@@ -179,6 +241,23 @@ export default function Home() {
               <button disabled={busy} onClick={() => refreshMachine(machine.machine_id)} type="button" className="secondary">
                 Refresh
               </button>
+              <div className="extend-action">
+                <input
+                  min="1"
+                  max="360"
+                  value={extendMinutes}
+                  onChange={(event) => setExtendMinutes(event.target.value)}
+                  type="number"
+                />
+                <button
+                  disabled={busy || machine.status === "terminated" || machine.status === "failed"}
+                  onClick={extendMachine}
+                  type="button"
+                  className="secondary"
+                >
+                  Extend
+                </button>
+              </div>
               <button
                 disabled={busy || machine.status === "terminated" || machine.status === "failed"}
                 onClick={terminateMachine}
@@ -195,10 +274,13 @@ export default function Home() {
   );
 }
 
+function bearerHeaders(token: string): HeadersInit {
+  return token ? { authorization: `Bearer ${token}` } : {};
+}
+
 function formatDate(value: string): string {
   return new Intl.DateTimeFormat(undefined, {
     dateStyle: "medium",
     timeStyle: "short",
   }).format(new Date(value));
 }
-
