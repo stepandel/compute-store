@@ -1,9 +1,10 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import type { MachineLease, MachineStatus } from "@/lib/models";
+import type { LeaseCapabilityToken, MachineLease, MachineStatus } from "@/lib/models";
 
 type StoreFile = {
   machines: MachineLease[];
+  capabilityTokens: LeaseCapabilityToken[];
 };
 
 export class LeaseStore {
@@ -14,6 +15,18 @@ export class LeaseStore {
       data.machines.push(lease);
       return data;
     });
+  }
+
+  async createCapabilityTokens(tokens: LeaseCapabilityToken[]): Promise<void> {
+    await this.update((data) => {
+      data.capabilityTokens.push(...tokens);
+      return data;
+    });
+  }
+
+  async getCapabilityTokenByHash(tokenHash: string): Promise<LeaseCapabilityToken | null> {
+    const data = await this.read();
+    return data.capabilityTokens.find((token) => token.tokenHash === tokenHash) ?? null;
   }
 
   async get(id: string): Promise<MachineLease | null> {
@@ -86,10 +99,11 @@ export class LeaseStore {
       const parsed = JSON.parse(raw) as StoreFile;
       return {
         machines: Array.isArray(parsed.machines) ? parsed.machines : [],
+        capabilityTokens: Array.isArray(parsed.capabilityTokens) ? parsed.capabilityTokens : [],
       };
     } catch (error) {
       if (isMissingFile(error)) {
-        return { machines: [] };
+        return { machines: [], capabilityTokens: [] };
       }
       throw error;
     }
@@ -103,4 +117,3 @@ function isExpirable(status: MachineStatus): boolean {
 function isMissingFile(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "ENOENT";
 }
-

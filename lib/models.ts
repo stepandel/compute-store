@@ -1,4 +1,5 @@
 export type MachineStatus = "provisioning" | "active" | "terminating" | "terminated" | "failed";
+export type CapabilityAction = "read" | "extend" | "terminate";
 
 export type CreateMachineRequest = {
   durationMinutes: number;
@@ -28,6 +29,22 @@ export type MachineLease = {
   failureReason: string | null;
 };
 
+export type LeaseCapabilityToken = {
+  id: string;
+  machineId: string;
+  tokenHash: string;
+  actions: CapabilityAction[];
+  createdAt: string;
+  expiresAt: string;
+  revokedAt: string | null;
+};
+
+export type MachineManagementTokens = {
+  read_token: string;
+  extend_token: string;
+  terminate_token: string;
+};
+
 export type PublicMachine = {
   machine_id: string;
   product: string;
@@ -40,9 +57,10 @@ export type PublicMachine = {
   ssh_command?: string;
   terminated_at?: string;
   failure_reason?: string;
+  management?: MachineManagementTokens;
 };
 
-export function toPublicMachine(lease: MachineLease): PublicMachine {
+export function toPublicMachine(lease: MachineLease, management?: MachineManagementTokens): PublicMachine {
   const body: PublicMachine = {
     machine_id: lease.id,
     product: lease.productId,
@@ -63,7 +81,9 @@ export function toPublicMachine(lease: MachineLease): PublicMachine {
   if (lease.failureReason) {
     body.failure_reason = lease.failureReason;
   }
+  if (management) {
+    body.management = management;
+  }
 
   return body;
 }
-
