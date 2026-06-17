@@ -204,6 +204,18 @@ button.danger:hover:not(:disabled) {
   font-size: 14px;
 }
 
+.policy-note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.policy-note a {
+  color: var(--accent);
+  font-weight: 700;
+}
+
 .status-panel {
   display: grid;
   gap: 18px;

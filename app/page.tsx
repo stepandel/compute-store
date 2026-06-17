@@ -197,6 +197,11 @@ export default function Home() {
               Refresh
             </button>
           </div>
+
+          <p className="policy-note">
+            Checkout is for lawful, authorized compute only. Abuse, scanning, spam, malware, mining, and evasion are not
+            allowed. See <a href="/acceptable-use">acceptable use</a>.
+          </p>
         </form>
 
         <div className="lookup">

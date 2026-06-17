@@ -1,6 +1,25 @@
 import { product } from "@/lib/config";
 
 const serviceUrl = process.env.NEXT_PUBLIC_STORE_URL ?? "http://localhost:3000";
+const acceptableUseUrl = "/acceptable-use";
+
+const prohibitedUses = [
+  "Spam, unsolicited bulk messaging, phishing, credential harvesting, or impersonation.",
+  "Network scanning, vulnerability probing, exploitation, denial-of-service activity, or traffic amplification against systems you do not own or have explicit permission to test.",
+  "Malware, botnets, command-and-control infrastructure, cryptojacking, or evasion tooling.",
+  "Cryptocurrency mining or other resource-draining workloads unrelated to the stated task.",
+  "Hosting, storing, or distributing illegal, infringing, abusive, or deceptive content.",
+  "Bypassing access controls, rate limits, geofencing, sanctions controls, or platform safety systems.",
+  "Processing highly sensitive data unless you have appropriate authorization, safeguards, and legal basis.",
+];
+
+const checkoutGuidance = [
+  "Use POST /api/checkout for paid purchases. Do not use POST /api/machines except in local/dev flows.",
+  "Submit duration_minutes and ssh_public_key as JSON.",
+  "If the service returns HTTP 402, inspect the MPP payment challenges and retry the same request with a Stripe-backed MPP credential.",
+  "After paid checkout succeeds, store the returned management tokens securely and poll the machine with read_token until status is active.",
+  "Terminate the machine with terminate_token as soon as the task is complete.",
+];
 
 export function agentStorefrontManifest() {
   return {
@@ -10,6 +29,7 @@ export function agentStorefrontManifest() {
     service_url: serviceUrl,
     llms_txt_url: "/llms.txt",
     openapi_url: "/openapi.json",
+    acceptable_use_url: acceptableUseUrl,
     auth: {
       type: "lease_capability_tokens",
       summary:
@@ -63,6 +83,13 @@ export function agentStorefrontManifest() {
         unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
       },
     },
+    checkout_guidance: checkoutGuidance,
+    usage_policy: {
+      summary: "Machines may be used only for lawful, authorized development, automation, testing, debugging, and compute tasks.",
+      prohibited_uses: prohibitedUses,
+      enforcement:
+        "Machines may be terminated, access may be revoked, and future checkouts may be refused for abuse, suspected abuse, provider complaints, sanctions risk, payment risk, or policy violations.",
+    },
     endpoints: {
       checkout: {
         method: "POST",
@@ -93,6 +120,7 @@ export function agentStorefrontManifest() {
     },
     operational_guidance: [
       "Create a machine only when a temporary Linux host is required.",
+      "Use only for lawful, authorized activity that complies with the acceptable use policy.",
       "Poll with the read token until status is active before using SSH.",
       "Use the extend token only if more time is required and the lease is still useful.",
       "Use the terminate token as soon as the machine is no longer needed.",
@@ -112,6 +140,11 @@ Primary product:
 - provider default: ${product.defaultProvider}
 - duration: ${product.minDurationMinutes}-${product.maxDurationMinutes} minutes
 - SSH username: ${product.username}
+- region: Hetzner EU (${product.location})
+
+Pricing:
+- base fee: $${formatCents(Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99))}
+- minute rate: $${formatCents(Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5))}/minute
 
 Create a machine:
 POST /api/checkout
@@ -119,7 +152,7 @@ Content-Type: application/json
 JSON: { "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
 
 If payment is required, the service responds with HTTP 402 and MPP payment challenges.
-Retry the same request with an MPP payment credential. After successful payment, the response includes:
+Retry the same request with a Stripe-backed MPP payment credential. After successful payment, the response includes:
 - checkout.status = paid
 - checkout.quote
 - machine
@@ -143,15 +176,26 @@ Terminate:
 DELETE /api/machines/{machine_id}
 Authorization: Bearer <terminate_token>
 
+Acceptable use:
+- Use machines only for lawful, authorized development, automation, testing, debugging, and compute tasks.
+${prohibitedUses.map((item) => `- Do not use machines for: ${item}`).join("\n")}
+- Full acceptable use policy: ${acceptableUseUrl}
+
 Important:
 - Treat all management tokens as secrets.
 - Use /api/checkout, not /api/machines, for paid agent purchases.
+- Do not use the unpaid dev endpoint in production purchase flows.
+- Do not retry failed payments blindly.
 - Do not expose tokens in logs or chat unless explicitly required.
 - Poll until status is active before trying to SSH.
 - Terminate the machine when finished.
 - Full machine-readable manifest: /.well-known/agent-storefront.json
 - OpenAPI spec: /openapi.json
 `;
+}
+
+function formatCents(cents: number): string {
+  return (cents / 100).toFixed(2);
 }
 
 export function openApiDocument() {
