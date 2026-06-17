@@ -8,7 +8,7 @@ const checkoutGuidance = [
   "Use POST /api/checkout for paid purchases. Do not use POST /api/machines except in local/dev flows.",
   "Submit duration_minutes and ssh_public_key as JSON.",
   "If the service returns HTTP 402, inspect the MPP payment challenges and retry the same request with a Stripe-backed MPP credential.",
-  "For local sandbox validation, use X-Checkout-Sandbox-Autopay: true only when the storefront advertises sandbox_autopay as enabled.",
+  "For Stripe sandbox validation, use the same MPP flow with Stripe Link CLI test mode: create the shared_payment_token spend request with --test when the challenge network_id is a profile_test_... value.",
   "After paid checkout succeeds, store the returned management tokens securely and poll the machine with read_token until status is active.",
   "Terminate the machine with terminate_token as soon as the task is complete.",
 ];
@@ -18,18 +18,21 @@ const paymentClientGuidance = {
     id: "stripe-link-cli-mpp-spt",
     name: "Stripe Link CLI MPP SPT",
     summary:
-      "Recommended for live agent payments. Use Stripe Link CLI, or its MCP integration, to create an approved spend request with credential_type=shared_payment_token, then pay the MPP endpoint with that spend request.",
+      "Recommended for agent payments. Decode the MPP challenge, create an approved Stripe Link CLI spend request with credential_type=shared_payment_token, then pay the MPP endpoint with that spend request.",
     credential_type: "shared_payment_token",
     command_sequence: [
-      "npx @stripe/link-cli spend-request create --payment-method-id <payment_method_id> --context 'Checkout a 60 minute bare Linux machine lease' --amount 399 --credential-type shared_payment_token --network-id <profile_id> --request-approval",
+      "npx @stripe/link-cli mpp decode --challenge '<WWW-Authenticate Payment challenge>'",
+      "npx @stripe/link-cli payment-methods list",
+      "npx @stripe/link-cli spend-request create --payment-method-id <payment_method_id> --credential-type shared_payment_token --network-id <network_id_from_challenge> --amount 399 --currency usd --context '<100+ character purchase rationale shown to the owner>' --line-item 'name:60 minute bare Linux machine lease,unit_amount:399,quantity:1' --total 'type:total,display_text:Total,amount:399' --request-approval",
       "npx @stripe/link-cli mpp pay {service_url}/api/checkout --spend-request-id <approved_spend_request_id> --method POST --header 'Content-Type: application/json' --data '{\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
     ],
   },
   sandbox_testing: {
-    id: "stripe-sandbox-autopay",
+    id: "stripe-link-cli-test-spt",
     summary:
-      "Local pre-production test path. When CHECKOUT_SANDBOX_AUTOPAY=true, PROVIDER=dry-run, STRIPE_SECRET_KEY starts with sk_test_, and STRIPE_PROFILE_ID starts with profile_test_, agents may send X-Checkout-Sandbox-Autopay: true to create a Stripe sandbox PaymentIntent with pm_card_visa and receive a dry-run machine.",
-    header: "X-Checkout-Sandbox-Autopay: true",
+      "Use the same MPP checkout path with Stripe test-mode credentials. If the decoded challenge network_id starts with profile_test_, create the shared_payment_token spend request with --test so Link CLI provisions a test SPT instead of a real payment credential.",
+    command_note:
+      "Add --test to the spend-request create command when paying a profile_test_... sandbox challenge.",
   },
   also_supported: [
     {
@@ -118,15 +121,10 @@ export function agentStorefrontManifest() {
         base_fee_cents: Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99),
         unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
       },
-      sandbox_autopay: {
-        enabled:
-          process.env.CHECKOUT_SANDBOX_AUTOPAY === "true" &&
-          process.env.PROVIDER === "dry-run" &&
-          process.env.STRIPE_SECRET_KEY?.startsWith("sk_test_") === true &&
-          process.env.STRIPE_PROFILE_ID?.startsWith("profile_test_") === true,
-        request_header: "X-Checkout-Sandbox-Autopay: true",
+      sandbox_testing: {
+        mode: "stripe_link_cli_test_spt",
         summary:
-          "Creates a Stripe sandbox PaymentIntent and fulfills a dry-run machine. This is for local/pre-production testing only and is disabled unless explicitly configured.",
+          "Sandbox uses the normal MPP 402 flow. Use STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and Link CLI spend-request create --test for test SPTs.",
       },
     },
     payment_client_guidance: paymentClientGuidance,
@@ -212,9 +210,10 @@ The machine object includes resource-scoped management tokens:
 Payment client guidance:
 - Recommended for agents: Stripe Link CLI MPP SPT.
 - Current Link CLI requires an approved spend request before mpp pay.
-- Spend request command shape: ${paymentClientGuidance.recommended.command_sequence[0]}
-- MPP pay command shape: ${paymentClientGuidance.recommended.command_sequence[1].replace("{service_url}", serviceUrl)}
-- Sandbox test path: if the manifest advertises payments.sandbox_autopay.enabled=true, send X-Checkout-Sandbox-Autopay: true with the checkout request. This creates a Stripe sandbox PaymentIntent and returns a dry-run machine.
+- Decode the payment challenge first: ${paymentClientGuidance.recommended.command_sequence[0]}
+- Create the SPT spend request: ${paymentClientGuidance.recommended.command_sequence[2]}
+- Pay the checkout endpoint: ${paymentClientGuidance.recommended.command_sequence[3].replace("{service_url}", serviceUrl)}
+- Sandbox test path: use the same MPP flow with STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and add --test to the Link CLI spend-request create command when the decoded network_id starts with profile_test_...
 - Also supported: any MPP client that can create a Stripe Shared Payment Token for the advertised challenge and retry with Authorization: Payment.
 - Do not use Link CLI virtual cards; this API does not expose a standard card checkout form.
 - Do not use manual card entry or crypto payment clients; they are not accepted by this storefront.
@@ -312,16 +311,6 @@ export function openApiDocument() {
           summary: "Create a temporary bare Linux machine after MPP payment.",
           description:
             "Submit the desired lease. If no valid MPP credential is present, the response is HTTP 402 with MPP payment challenges. Retry the same request with an MPP payment credential to provision the machine.",
-          parameters: [
-            {
-              name: "X-Checkout-Sandbox-Autopay",
-              in: "header",
-              required: false,
-              schema: { type: "string", enum: ["true"] },
-              description:
-                "Local/pre-production only. When sandbox_autopay is enabled, creates a Stripe sandbox PaymentIntent and fulfills a dry-run machine.",
-            },
-          ],
           requestBody: {
             required: true,
             content: {
@@ -524,14 +513,8 @@ export function openApiDocument() {
               required: ["status", "quote"],
               properties: {
                 status: { type: "string", const: "paid" },
-                mode: { type: "string", enum: ["mpp", "stripe_sandbox_autopay"] },
+                mode: { type: "string", const: "mpp" },
                 quote: { $ref: "#/components/schemas/CheckoutQuote" },
-                stripe: {
-                  type: "object",
-                  properties: {
-                    payment_intent_id: { type: "string", pattern: "^pi_" },
-                  },
-                },
               },
             },
             machine: { $ref: "#/components/schemas/MachineWithManagement" },

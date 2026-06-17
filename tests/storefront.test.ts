@@ -4,8 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { product } from "@/lib/config";
-import { canUseSandboxAutopay, quoteCheckout } from "@/lib/checkout";
-import { loadSettings } from "@/lib/config";
+import { quoteCheckout } from "@/lib/checkout";
 import type { MachineLease } from "@/lib/models";
 import { DryRunProvider } from "@/lib/providers";
 import { AuthorizationError, MachineService } from "@/lib/service";
@@ -63,33 +62,6 @@ describe("compute storefront", () => {
     } finally {
       restoreEnv("CHECKOUT_BASE_FEE_CENTS", originalBaseFee);
       restoreEnv("PRICE_CENTS_PER_MINUTE", originalMinutePrice);
-    }
-  });
-
-  it("enables sandbox autopay only for dry-run test-mode Stripe settings", () => {
-    const originalProvider = process.env.PROVIDER;
-    const originalAutopay = process.env.CHECKOUT_SANDBOX_AUTOPAY;
-    const originalSecret = process.env.STRIPE_SECRET_KEY;
-    const originalProfile = process.env.STRIPE_PROFILE_ID;
-
-    try {
-      process.env.PROVIDER = "dry-run";
-      process.env.CHECKOUT_SANDBOX_AUTOPAY = "true";
-      process.env.STRIPE_SECRET_KEY = "sk_test_example";
-      process.env.STRIPE_PROFILE_ID = "profile_test_example";
-      assert.equal(canUseSandboxAutopay(loadSettings()), true);
-
-      process.env.PROVIDER = "hetzner";
-      assert.equal(canUseSandboxAutopay(loadSettings()), false);
-
-      process.env.PROVIDER = "dry-run";
-      process.env.STRIPE_SECRET_KEY = "sk_live_example";
-      assert.equal(canUseSandboxAutopay(loadSettings()), false);
-    } finally {
-      restoreEnv("PROVIDER", originalProvider);
-      restoreEnv("CHECKOUT_SANDBOX_AUTOPAY", originalAutopay);
-      restoreEnv("STRIPE_SECRET_KEY", originalSecret);
-      restoreEnv("STRIPE_PROFILE_ID", originalProfile);
     }
   });
 

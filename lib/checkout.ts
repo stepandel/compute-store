@@ -1,6 +1,6 @@
 import Stripe from "stripe";
 import { Mppx, stripe as mppStripe } from "mppx/server";
-import { loadSettings, type CheckoutSettings, type Settings } from "@/lib/config";
+import { loadSettings, type CheckoutSettings } from "@/lib/config";
 import type { CreateMachineRequest } from "@/lib/models";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -21,11 +21,6 @@ export type MppCheckout = {
   payment: ReturnType<typeof Mppx.create>;
 };
 
-export type SandboxCheckoutPayment = {
-  mode: "stripe_sandbox_autopay";
-  payment_intent_id: string;
-};
-
 export function quoteCheckout(request: CreateMachineRequest): CheckoutQuote {
   const settings = loadSettings();
   const amountCents = settings.checkout.baseFeeCents + request.durationMinutes * settings.checkout.priceCentsPerMinute;
@@ -38,47 +33,6 @@ export function quoteCheckout(request: CreateMachineRequest): CheckoutQuote {
     amount_cents: amountCents,
     amount: formatUsdAmount(amountCents),
     currency: settings.checkout.currency,
-  };
-}
-
-export function canUseSandboxAutopay(settings: Settings): boolean {
-  return (
-    settings.checkout.sandboxAutopay &&
-    settings.provider === "dry-run" &&
-    settings.checkout.stripeSecretKey?.startsWith("sk_test_") === true &&
-    settings.checkout.stripeProfileId?.startsWith("profile_test_") === true
-  );
-}
-
-export async function createSandboxCheckoutPayment(request: CreateMachineRequest): Promise<SandboxCheckoutPayment> {
-  const settings = loadSettings();
-  if (!canUseSandboxAutopay(settings)) {
-    throw new CheckoutConfigurationError(
-      "Sandbox autopay requires CHECKOUT_SANDBOX_AUTOPAY=true, PROVIDER=dry-run, STRIPE_SECRET_KEY=sk_test_..., and STRIPE_PROFILE_ID=profile_test_...",
-    );
-  }
-
-  const quote = quoteCheckout(request);
-  const stripeClient = new Stripe(settings.checkout.stripeSecretKey!, {
-    apiVersion: "2026-05-27.dahlia",
-  });
-  const paymentIntent = await stripeClient.paymentIntents.create({
-    amount: quote.amount_cents,
-    currency: quote.currency,
-    confirm: true,
-    description: `${quote.duration_minutes} minute ${quote.product_id} lease sandbox checkout`,
-    metadata: checkoutMetadata(quote),
-    payment_method: "pm_card_visa",
-    payment_method_types: ["card"],
-  });
-
-  if (paymentIntent.status !== "succeeded") {
-    throw new CheckoutConfigurationError(`Sandbox payment did not succeed. Stripe status: ${paymentIntent.status}.`);
-  }
-
-  return {
-    mode: "stripe_sandbox_autopay",
-    payment_intent_id: paymentIntent.id,
   };
 }
 

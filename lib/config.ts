@@ -25,7 +25,6 @@ export type CheckoutSettings = {
   priceCentsPerMinute: number;
   currency: "usd";
   mppSecretKey?: string;
-  sandboxAutopay: boolean;
   stripeSecretKey?: string;
   stripeProfileId?: string;
   stripePaymentMethodTypes: string[];
@@ -66,7 +65,6 @@ export function loadSettings(): Settings {
       priceCentsPerMinute,
       currency: "usd",
       mppSecretKey: process.env.MPP_SECRET_KEY,
-      sandboxAutopay: process.env.CHECKOUT_SANDBOX_AUTOPAY === "true",
       stripeSecretKey: process.env.STRIPE_SECRET_KEY,
       stripeProfileId: process.env.STRIPE_PROFILE_ID,
       stripePaymentMethodTypes: parseCsv(process.env.STRIPE_PAYMENT_METHOD_TYPES, ["card", "link"]),
