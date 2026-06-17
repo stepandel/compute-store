@@ -1,17 +1,8 @@
 import { product } from "@/lib/config";
+import { acceptableUsePath, prohibitedUses } from "@/lib/policy";
 
 const serviceUrl = process.env.NEXT_PUBLIC_STORE_URL ?? "http://localhost:3000";
-const acceptableUseUrl = "/acceptable-use";
-
-const prohibitedUses = [
-  "Spam, unsolicited bulk messaging, phishing, credential harvesting, or impersonation.",
-  "Network scanning, vulnerability probing, exploitation, denial-of-service activity, or traffic amplification against systems you do not own or have explicit permission to test.",
-  "Malware, botnets, command-and-control infrastructure, cryptojacking, or evasion tooling.",
-  "Cryptocurrency mining or other resource-draining workloads unrelated to the stated task.",
-  "Hosting, storing, or distributing illegal, infringing, abusive, or deceptive content.",
-  "Bypassing access controls, rate limits, geofencing, sanctions controls, or platform safety systems.",
-  "Processing highly sensitive data unless you have appropriate authorization, safeguards, and legal basis.",
-];
+const acceptableUseUrl = new URL(acceptableUsePath, serviceUrl).toString();
 
 const checkoutGuidance = [
   "Use POST /api/checkout for paid purchases. Do not use POST /api/machines except in local/dev flows.",

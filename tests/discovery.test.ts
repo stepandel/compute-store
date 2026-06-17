@@ -25,7 +25,7 @@ describe("agent discovery", () => {
     assert.equal(manifest.payments.protocol, "mpp");
     assert.equal(manifest.payments.processor, "stripe");
     assert.deepEqual(manifest.payments.methods, ["stripe-spt"]);
-    assert.equal(manifest.acceptable_use_url, "/acceptable-use");
+    assert.equal(manifest.acceptable_use_url, "http://localhost:3000/acceptable-use");
     assert.ok(manifest.checkout_guidance.some((item) => item.includes("HTTP 402")));
     assert.ok(manifest.usage_policy.prohibited_uses.some((item) => item.includes("Spam")));
     assert.equal(manifest.endpoints.checkout.path, "/api/checkout");
