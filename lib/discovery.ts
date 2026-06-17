@@ -60,7 +60,7 @@ export function agentStorefrontManifest() {
       pricing: {
         currency: "usd",
         base_fee_cents: Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99),
-        unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 2),
+        unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
       },
     },
     endpoints: {

@@ -56,9 +56,9 @@ describe("compute storefront", () => {
 
       assert.equal(quote.currency, "usd");
       assert.equal(quote.base_fee_cents, 99);
-      assert.equal(quote.unit_price_cents_per_minute, 2);
-      assert.equal(quote.amount_cents, 219);
-      assert.equal(quote.amount, "2.19");
+      assert.equal(quote.unit_price_cents_per_minute, 5);
+      assert.equal(quote.amount_cents, 399);
+      assert.equal(quote.amount, "3.99");
     } finally {
       restoreEnv("CHECKOUT_BASE_FEE_CENTS", originalBaseFee);
       restoreEnv("PRICE_CENTS_PER_MINUTE", originalMinutePrice);

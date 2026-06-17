@@ -46,7 +46,7 @@ export function loadSettings(): Settings {
   const priceCentsPerMinute = parsePositiveInteger(
     process.env.PRICE_CENTS_PER_MINUTE,
     "PRICE_CENTS_PER_MINUTE",
-    2,
+    5,
   );
 
   if (provider !== "dry-run" && provider !== "hetzner") {

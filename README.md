@@ -33,7 +33,7 @@ STRIPE_SECRET_KEY=sk_test_...
 STRIPE_PROFILE_ID=profile_test_...
 STRIPE_PAYMENT_METHOD_TYPES=card,link
 CHECKOUT_BASE_FEE_CENTS=99
-PRICE_CENTS_PER_MINUTE=2
+PRICE_CENTS_PER_MINUTE=5
 ```
 
 Generate `MPP_SECRET_KEY` with:
@@ -94,9 +94,9 @@ Without an MPP credential, the response is `402 Payment Required` with `WWW-Auth
       "product_id": "bare-linux-machine",
       "duration_minutes": 60,
       "base_fee_cents": 99,
-      "unit_price_cents_per_minute": 2,
-      "amount_cents": 219,
-      "amount": "2.19",
+      "unit_price_cents_per_minute": 5,
+      "amount_cents": 399,
+      "amount": "3.99",
       "currency": "usd"
     }
   },
