@@ -71,6 +71,16 @@ export class LeaseStore {
     });
   }
 
+  async extendLease(id: string, expiresAt: string): Promise<void> {
+    await this.update((data) => {
+      data.machines = data.machines.map((lease) => (lease.id === id ? { ...lease, expiresAt } : lease));
+      data.capabilityTokens = data.capabilityTokens.map((token) =>
+        token.machineId === id ? { ...token, expiresAt } : token,
+      );
+      return data;
+    });
+  }
+
   async expiredLeases(now = new Date()): Promise<MachineLease[]> {
     const data = await this.read();
     return data.machines

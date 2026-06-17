@@ -32,3 +32,21 @@ export function parseCreateMachineRequest(payload: unknown, product: Product): C
     sshPublicKey: sshPublicKey.trim(),
   };
 }
+
+export function parseExtendMachineRequest(payload: unknown): number {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw new ValidationError("Request body must be a JSON object.");
+  }
+
+  const body = payload as Record<string, unknown>;
+  const additionalMinutes = body.additional_minutes;
+
+  if (typeof additionalMinutes !== "number" || !Number.isInteger(additionalMinutes)) {
+    throw new ValidationError("additional_minutes must be an integer.");
+  }
+  if (additionalMinutes < 1) {
+    throw new ValidationError("additional_minutes must be greater than zero.");
+  }
+
+  return additionalMinutes;
+}

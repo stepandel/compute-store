@@ -6,7 +6,7 @@ import { join } from "node:path";
 import { product } from "@/lib/config";
 import type { MachineLease } from "@/lib/models";
 import { DryRunProvider } from "@/lib/providers";
-import { MachineService } from "@/lib/service";
+import { AuthorizationError, MachineService } from "@/lib/service";
 import { LeaseStore } from "@/lib/store";
 import { parseCreateMachineRequest, ValidationError } from "@/lib/validation";
 import { toPublicMachine } from "@/lib/models";
@@ -56,31 +56,64 @@ describe("compute storefront", () => {
   });
 
   it("creates a machine that becomes active", async () => {
-    const lease = await service.createMachine({
+    const created = await service.createMachine({
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
 
+    const { lease, management } = created;
     assert.equal(lease.status, "provisioning");
+    assert.match(management.read_token, /^mt_read_/);
+    assert.match(management.extend_token, /^mt_extend_/);
+    assert.match(management.terminate_token, /^mt_term_/);
 
-    const active = await waitForMachine(lease.id, (machine) => machine.status === "active");
+    const active = await waitForMachine(lease.id, management.read_token, (machine) => machine.status === "active");
     assert.equal(active.status, "active");
     assert.equal(active.host, "203.0.113.10");
     assert.equal(toPublicMachine(active).ssh_command, "ssh root@203.0.113.10");
   });
 
-  it("terminates a machine", async () => {
-    const lease = await service.createMachine({
+  it("requires the right capability token to read a machine", async () => {
+    const { lease, management } = await service.createMachine({
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
-    await waitForMachine(lease.id, (machine) => machine.status === "active");
 
-    const terminated = await service.terminateMachine(lease.id);
+    await assert.rejects(() => service.getMachine(lease.id, ""), AuthorizationError);
+    await assert.rejects(() => service.getMachine(lease.id, management.terminate_token), AuthorizationError);
+
+    const readable = await service.getMachine(lease.id, management.read_token);
+    assert.ok(readable);
+    assert.equal(readable.id, lease.id);
+  });
+
+  it("terminates a machine", async () => {
+    const { lease, management } = await service.createMachine({
+      durationMinutes: 60,
+      sshPublicKey: VALID_KEY,
+    });
+    await waitForMachine(lease.id, management.read_token, (machine) => machine.status === "active");
+
+    await assert.rejects(() => service.terminateMachine(lease.id, management.read_token), AuthorizationError);
+    const terminated = await service.terminateMachine(lease.id, management.terminate_token);
 
     assert.ok(terminated);
     assert.equal(terminated.status, "terminated");
     assert.ok(terminated.terminatedAt);
+  });
+
+  it("extends a machine with the extend capability token", async () => {
+    const { lease, management } = await service.createMachine({
+      durationMinutes: 60,
+      sshPublicKey: VALID_KEY,
+    });
+    await waitForMachine(lease.id, management.read_token, (machine) => machine.status === "active");
+
+    await assert.rejects(() => service.extendMachine(lease.id, management.read_token, 15), AuthorizationError);
+    const extended = await service.extendMachine(lease.id, management.extend_token, 15);
+
+    assert.ok(extended);
+    assert.equal(Date.parse(extended.expiresAt), Date.parse(lease.expiresAt) + 15 * 60_000);
   });
 
   it("expires due machines without a resident worker", async () => {
@@ -110,16 +143,19 @@ describe("compute storefront", () => {
     assert.equal(stored.status, "terminated");
   });
 
-  async function waitForMachine(id: string, predicate: (lease: MachineLease) => boolean): Promise<MachineLease> {
+  async function waitForMachine(
+    id: string,
+    readToken: string,
+    predicate: (lease: MachineLease) => boolean,
+  ): Promise<MachineLease> {
     for (let attempt = 0; attempt < 20; attempt += 1) {
-      const lease = await service.getMachine(id);
+      const lease = await service.getMachine(id, readToken);
       if (lease && predicate(lease)) {
         return lease;
       }
       await new Promise((resolve) => setTimeout(resolve, 20));
     }
-    const lease = await service.getMachine(id);
+    const lease = await service.getMachine(id, readToken);
     assert.fail(`Machine ${id} did not reach expected state. Last state: ${lease?.status ?? "missing"}`);
   }
 });
-

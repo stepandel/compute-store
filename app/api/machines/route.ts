@@ -8,8 +8,8 @@ export async function POST(request: Request) {
   try {
     const payload = await request.json();
     const createRequest = parseCreateMachineRequest(payload, product);
-    const lease = await createMachineService().createMachine(createRequest);
-    return NextResponse.json(toPublicMachine(lease), { status: 202 });
+    const created = await createMachineService().createMachine(createRequest);
+    return NextResponse.json(toPublicMachine(created.lease, created.management), { status: 202 });
   } catch (error) {
     if (error instanceof SyntaxError) {
       return NextResponse.json({ error: "Request body must be valid JSON." }, { status: 400 });
@@ -20,4 +20,3 @@ export async function POST(request: Request) {
     throw error;
   }
 }
-
