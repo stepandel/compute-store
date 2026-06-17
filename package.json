@@ -11,9 +11,11 @@
     "test": "tsx --test tests/*.test.ts"
   },
   "dependencies": {
+    "mppx": "^0.7.0",
     "next": "^16.2.9",
     "react": "^19.2.7",
-    "react-dom": "^19.2.7"
+    "react-dom": "^19.2.7",
+    "stripe": "^22.2.1"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

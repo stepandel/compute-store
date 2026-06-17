@@ -7,7 +7,8 @@ describe("agent discovery", () => {
     const text = llmsText();
 
     assert.match(text, /Agentic Compute Storefront/);
-    assert.ok(text.includes("POST /api/machines"));
+    assert.ok(text.includes("POST /api/checkout"));
+    assert.match(text, /HTTP 402/);
     assert.match(text, /read_token/);
     assert.match(text, /terminate_token/);
     assert.match(text, /Terminate the machine when finished/);
@@ -18,7 +19,8 @@ describe("agent discovery", () => {
 
     assert.equal(manifest.products[0].id, "bare-linux-machine");
     assert.equal(manifest.auth.type, "lease_capability_tokens");
-    assert.equal(manifest.endpoints.create.path, "/api/machines");
+    assert.equal(manifest.payments.protocol, "mpp");
+    assert.equal(manifest.endpoints.checkout.path, "/api/checkout");
     assert.equal(manifest.endpoints.read.auth, "Bearer <read_token>");
     assert.equal(manifest.openapi_url, "/openapi.json");
   });
@@ -27,10 +29,12 @@ describe("agent discovery", () => {
     const spec = openApiDocument();
 
     assert.equal(spec.openapi, "3.1.0");
+    assert.ok(spec.paths["/api/checkout"]);
     assert.ok(spec.paths["/api/machines"]);
     assert.ok(spec.paths["/api/machines/{machine_id}"]);
     assert.ok(spec.paths["/api/machines/{machine_id}/extend"]);
     assert.ok(spec.components.securitySchemes.readToken);
+    assert.ok(spec.components.schemas.CheckoutMachineResponse);
     assert.ok(spec.components.schemas.MachineWithManagement);
   });
 });

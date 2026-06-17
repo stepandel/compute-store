@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { product } from "@/lib/config";
+import { quoteCheckout } from "@/lib/checkout";
 import type { MachineLease } from "@/lib/models";
 import { DryRunProvider } from "@/lib/providers";
 import { AuthorizationError, MachineService } from "@/lib/service";
@@ -39,6 +40,18 @@ describe("compute storefront", () => {
 
     assert.equal(request.durationMinutes, 60);
     assert.equal(request.sshPublicKey, VALID_KEY);
+  });
+
+  it("prices checkout by requested lease duration", () => {
+    const quote = quoteCheckout({
+      durationMinutes: 60,
+      sshPublicKey: VALID_KEY,
+    });
+
+    assert.equal(quote.currency, "usd");
+    assert.equal(quote.unit_price_cents_per_minute, 5);
+    assert.equal(quote.amount_cents, 300);
+    assert.equal(quote.amount, "3.00");
   });
 
   it("rejects durations outside policy", () => {
