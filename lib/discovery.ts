@@ -33,6 +33,8 @@ const paymentClientGuidance = {
       "Use the same MPP checkout path with Stripe test-mode credentials. If the decoded challenge network_id starts with profile_test_, create the shared_payment_token spend request with --test so Link CLI provisions a test SPT instead of a real payment credential.",
     command_note:
       "Add --test to the spend-request create command when paying a profile_test_... sandbox challenge.",
+    real_provider_note:
+      "Stripe test-mode payments are accepted only for dry-run provisioning by default. Real providers such as Hetzner require live payments unless the operator explicitly enables ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER for a controlled infrastructure test.",
     fallback_note:
       "Some Stripe sandbox accounts cannot grant network-scoped Shared Payment Tokens (the SPT grant rejects seller_details[network_id] with 'Received unknown parameter'). When that happens, Link CLI reports the spend request as approved but never attaches a shared_payment_token, so `mpp pay` fails locally with 'Spend request does not have a shared payment token'. Do not retry Link CLI in that case — fall back to the account-scoped test SPT client below (id: mppx-cli-account-scoped-test-spt).",
   },
@@ -138,7 +140,7 @@ export function agentStorefrontManifest() {
       sandbox_testing: {
         mode: "stripe_link_cli_test_spt",
         summary:
-          "Sandbox uses the normal MPP 402 flow. Use STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and Link CLI spend-request create --test for test SPTs.",
+          "Sandbox uses the normal MPP 402 flow with dry-run provisioning by default. Use STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and Link CLI spend-request create --test for test SPTs.",
       },
     },
     payment_client_guidance: paymentClientGuidance,
@@ -181,6 +183,7 @@ export function agentStorefrontManifest() {
       "Create a machine only when a temporary Linux host is required.",
       "Use only for lawful, authorized activity that complies with the acceptable use policy.",
       "Poll with the read token until status is active before using SSH.",
+      "Do not expect Stripe sandbox payments to create real-provider resources unless the operator explicitly opted into that infrastructure test.",
       "Use the extend token only if more time is required and the lease is still useful.",
       "Use the terminate token as soon as the machine is no longer needed.",
       "If a request fails with 401 or 403, do not retry blindly; verify the correct capability token is being used.",
@@ -228,6 +231,7 @@ Payment client guidance:
 - Create the SPT spend request: ${paymentClientGuidance.recommended.command_sequence[2]}
 - Pay the checkout endpoint: ${paymentClientGuidance.recommended.command_sequence[3].replace("{service_url}", serviceUrl)}
 - Sandbox test path: use the same MPP flow with STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and add --test to the Link CLI spend-request create command when the decoded network_id starts with profile_test_...
+- Sandbox payments create dry-run machines by default. Real providers such as Hetzner require live payments unless the operator explicitly enables ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER for a controlled infrastructure test.
 - Sandbox fallback (account-scoped test SPT): some Stripe sandbox accounts cannot grant network-scoped SPTs (the grant rejects seller_details[network_id] with "Received unknown parameter"). Symptom: Link CLI marks the spend request approved but never attaches a shared_payment_token, so "mpp pay" fails locally with "Spend request does not have a shared payment token". Do not retry Link CLI. Instead pay with the mppx CLI, which mints an account-scoped test SPT via POST /v1/test_helpers/shared_payment/granted_tokens and retries with Authorization: Payment:
     MPPX_STRIPE_SECRET_KEY=sk_test_... npx mppx ${serviceUrl}/api/checkout -X POST -J '{"duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}' -M paymentMethod=pm_card_visa
   (Use a Stripe test secret key for the seller profile's account; in this self-contained sandbox that is the storefront's own STRIPE_SECRET_KEY. Test mode only — charges a Stripe test PaymentIntent, no real money.)

@@ -26,8 +26,10 @@ Useful env vars:
 
 ```bash
 DATA_PATH=data/machines.json
+LEASE_STORE=file
 PROVIDER=dry-run
 ALLOW_UNPAID_MACHINE_CREATE=false
+ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER=false
 CRON_SECRET=replace-with-random-secret
 MPP_SECRET_KEY=replace-with-random-base64-secret
 STRIPE_SECRET_KEY=sk_test_...
@@ -36,6 +38,17 @@ STRIPE_PAYMENT_METHOD_TYPES=card,link
 CHECKOUT_BASE_FEE_CENTS=99
 PRICE_CENTS_PER_MINUTE=5
 ```
+
+For Vercel or any serverless deployment that provisions real infrastructure, use durable storage instead of the local JSON file:
+
+```bash
+LEASE_STORE=redis-rest
+REDIS_REST_URL=https://...
+REDIS_REST_TOKEN=...
+REDIS_REST_KEY=checkout-proto:leases
+```
+
+`LEASE_STORE=file` is for local development and tests. The app refuses to run real providers in `NODE_ENV=production` with the file store because Vercel function filesystems are not durable application storage.
 
 Generate `MPP_SECRET_KEY` with:
 
@@ -81,6 +94,12 @@ STRIPE_SECRET_KEY=sk_test_...
 STRIPE_PROFILE_ID=profile_test_...
 ```
 
+By default, Stripe test-mode payments are blocked when `PROVIDER=hetzner` because they would create real billable servers without collecting real payment. For a tightly controlled infrastructure test only, explicitly set:
+
+```bash
+ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER=true
+```
+
 When the decoded challenge `network_id` starts with `profile_test_`, add `--test` to `npx @stripe/link-cli spend-request create`. This provisions a test Shared Payment Token while still exercising the same `402` and `Authorization: Payment` checkout path used in production.
 
 Any MPP client that can create a Stripe SPT for the advertised challenge and retry with `Authorization: Payment ...` should work. Link CLI virtual cards and manual card entry are not supported because this storefront exposes an agentic MPP endpoint, not a browser card checkout form. Crypto MPP is intentionally not accepted.
@@ -92,6 +111,9 @@ To use Hetzner for real provisioning:
 ```bash
 PROVIDER=hetzner
 HETZNER_API_TOKEN=...
+LEASE_STORE=redis-rest
+REDIS_REST_URL=...
+REDIS_REST_TOKEN=...
 bun run dev
 ```
 
@@ -101,8 +123,9 @@ The Hetzner adapter is configured for a small EU Ubuntu machine:
 - Image: `ubuntu-24.04`
 - Location: `fsn1` in Falkenstein, Germany
 - Access: the provided SSH public key is attached at provision time
+- Network hardening: each lease gets a Hetzner Cloud Firewall allowing inbound TCP/22 from IPv4/IPv6 and denying other inbound traffic
 
-The next hardening step is to attach a per-lease firewall that allows inbound SSH and denies other inbound traffic.
+Provisioning is completed before checkout returns. If Hetzner creation fails after a partial resource was created, the app attempts to clean up the server, SSH key, and firewall before marking the lease failed.
 
 ## API
 
@@ -217,9 +240,9 @@ flowchart TD
 
 There is no required resident worker. Expiry runs opportunistically during create/get flows and through `GET /api/machines/expire`, which is scheduled in `vercel.json` as a Vercel Cron job every five minutes.
 
-Vercel Cron invokes the configured path with an HTTP `GET` request and sends `CRON_SECRET` as `Authorization: Bearer <secret>`. Set `CRON_SECRET` in Vercel before deploying. Hobby plans currently allow cron jobs only once per day, so timely lease expiry needs a paid plan or a different scheduler.
+Vercel Cron invokes the configured path with an HTTP `GET` request and sends `CRON_SECRET` as `Authorization: Bearer <secret>`. Set `CRON_SECRET` in Vercel before deploying. The bundled five-minute cron requires a Vercel plan that supports that frequency; Hobby plans allow only daily cron, so timely real-server expiry needs a paid Vercel plan or a separate external scheduler.
 
-The JSON store is useful for local prototyping. Before real Vercel production usage, move leases and capability token hashes to durable storage such as Postgres, Redis, or Vercel KV.
+The JSON store is useful for local prototyping. Real Vercel usage should set `LEASE_STORE=redis-rest` and point `REDIS_REST_URL` / `REDIS_REST_TOKEN` at durable Redis-compatible storage.
 
 The agent never receives cloud-provider credentials. It receives only the leased machine host, SSH command, and resource-scoped capability tokens for that lease. Raw tokens are returned once at create time and stored hashed at rest.
 

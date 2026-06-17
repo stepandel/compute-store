@@ -1,6 +1,7 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
 import { CheckoutConfigurationError, createMppCheckout } from "@/lib/checkout";
+import { loadSettings } from "@/lib/config";
 
 describe("checkout configuration", () => {
   it("blocks Stripe test-mode payments from creating real provider resources by default", () => {
@@ -20,6 +21,20 @@ describe("checkout configuration", () => {
 
     try {
       assert.throws(() => createMppCheckout(), CheckoutConfigurationError);
+    } finally {
+      restoreEnv(original);
+    }
+  });
+
+  it("requires durable storage for real providers in production", () => {
+    const original = snapshotEnv(["NODE_ENV", "PROVIDER", "LEASE_STORE"]);
+
+    Object.assign(process.env, { NODE_ENV: "production" });
+    process.env.PROVIDER = "hetzner";
+    process.env.LEASE_STORE = "file";
+
+    try {
+      assert.throws(() => loadSettings(), /LEASE_STORE=redis-rest/);
     } finally {
       restoreEnv(original);
     }
