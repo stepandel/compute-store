@@ -26,6 +26,7 @@ Useful env vars:
 ```bash
 DATA_PATH=data/machines.json
 PROVIDER=dry-run
+CRON_SECRET=replace-with-random-secret
 ```
 
 To use Hetzner for real provisioning:
@@ -84,7 +85,8 @@ curl -X DELETE -s http://localhost:3000/api/machines/<machine_id> \
 Expire due leases:
 
 ```bash
-curl -X POST -s http://localhost:3000/api/machines/expire
+curl -s http://localhost:3000/api/machines/expire \
+  -H 'authorization: Bearer <cron_secret>'
 ```
 
 Health check:
@@ -108,7 +110,11 @@ flowchart TD
   H --> I["Provider terminates expired server"]
 ```
 
-There is no required resident worker. Expiry runs opportunistically during create/get flows and can also be triggered through `POST /api/machines/expire`, which is suitable for a cron job later.
+There is no required resident worker. Expiry runs opportunistically during create/get flows and through `GET /api/machines/expire`, which is scheduled in `vercel.json` as a Vercel Cron job every five minutes.
+
+Vercel Cron invokes the configured path with an HTTP `GET` request and sends `CRON_SECRET` as `Authorization: Bearer <secret>`. Set `CRON_SECRET` in Vercel before deploying. Hobby plans currently allow cron jobs only once per day, so timely lease expiry needs a paid plan or a different scheduler.
+
+The JSON store is useful for local prototyping. Before real Vercel production usage, move leases and capability token hashes to durable storage such as Postgres, Redis, or Vercel KV.
 
 The agent never receives cloud-provider credentials. It receives only the leased machine host, SSH command, and resource-scoped capability tokens for that lease. Raw tokens are returned once at create time and stored hashed at rest.
 
