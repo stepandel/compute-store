@@ -26,12 +26,16 @@ type ManagementTokens = {
 type CheckoutResponse = {
   checkout: {
     status: "paid";
+    mode?: "mpp" | "stripe_sandbox_autopay";
     quote: {
       amount: string;
       currency: "usd";
       base_fee_cents: number;
       duration_minutes: number;
       unit_price_cents_per_minute: number;
+    };
+    stripe?: {
+      payment_intent_id?: string;
     };
   };
   machine: PublicMachine;

@@ -27,11 +27,13 @@ Useful env vars:
 ```bash
 DATA_PATH=data/machines.json
 PROVIDER=dry-run
+ALLOW_UNPAID_MACHINE_CREATE=false
 CRON_SECRET=replace-with-random-secret
 MPP_SECRET_KEY=replace-with-random-base64-secret
 STRIPE_SECRET_KEY=sk_test_...
 STRIPE_PROFILE_ID=profile_test_...
 STRIPE_PAYMENT_METHOD_TYPES=card,link
+CHECKOUT_SANDBOX_AUTOPAY=false
 CHECKOUT_BASE_FEE_CENTS=99
 PRICE_CENTS_PER_MINUTE=5
 ```
@@ -46,15 +48,36 @@ Paid checkout is exposed at `POST /api/checkout`. It follows the MPP pattern use
 
 For Stripe SPT/card-style MPP payments, create a Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_test_...` value in test mode or the `profile_...` value in live mode. Use a matching `STRIPE_SECRET_KEY`: `sk_test_...` for sandbox checkout, `sk_live_...` for real payments. The default accepted SPT-backed payment methods are `card,link`.
 
-Recommended agent payment path is Stripe Link CLI using an MPP Shared Payment Token:
+Recommended live agent payment path is Stripe Link CLI using an MPP Shared Payment Token. Current Link CLI versions require a pre-approved spend request:
 
 ```bash
+npx @stripe/link-cli spend-request create \
+  --payment-method-id <payment_method_id> \
+  --context "Checkout a 60 minute bare Linux machine lease" \
+  --amount 399 \
+  --credential-type shared_payment_token \
+  --network-id <profile_id> \
+  --request-approval
+
 npx @stripe/link-cli mpp pay http://localhost:3000/api/checkout \
+  --spend-request-id <approved_spend_request_id> \
   --method POST \
+  --header 'Content-Type: application/json' \
   --data '{"duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}'
 ```
 
 Any MPP client that can create a Stripe SPT for the advertised challenge and retry with `Authorization: Payment ...` should work. Link CLI virtual cards and manual card entry are not supported because this storefront exposes an agentic MPP endpoint, not a browser card checkout form. Crypto MPP is intentionally not accepted.
+
+For local sandbox validation before live SPTs work, enable Stripe sandbox autopay:
+
+```bash
+PROVIDER=dry-run
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_PROFILE_ID=profile_test_...
+CHECKOUT_SANDBOX_AUTOPAY=true
+```
+
+Then call checkout with `X-Checkout-Sandbox-Autopay: true`. The server creates a Stripe sandbox PaymentIntent with Stripe's test card payment method and returns a dry-run machine. This path is intentionally disabled unless the provider is `dry-run` and Stripe credentials are test-mode values.
 
 Checkout is subject to [acceptable use](ACCEPTABLE_USE.md), also served for live agents at `/acceptable-use`. Machines are for lawful, authorized development, automation, testing, debugging, and compute tasks. Do not use leased machines for spam, phishing, unauthorized scanning or exploitation, denial-of-service activity, malware, botnets, cryptojacking, cryptocurrency mining, illegal content, sanctions evasion, or platform safety bypasses.
 
@@ -123,7 +146,7 @@ Without an MPP credential, the response is `402 Payment Required` with `WWW-Auth
 }
 ```
 
-The unpaid local/dev provisioning endpoint remains available:
+The unpaid local/dev provisioning endpoint remains available only when `PROVIDER=dry-run` or `ALLOW_UNPAID_MACHINE_CREATE=true`:
 
 ```bash
 curl -s http://localhost:3000/api/machines \

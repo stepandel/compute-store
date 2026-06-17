@@ -1,11 +1,18 @@
 import { NextResponse } from "next/server";
 import { createMachineService } from "@/lib/service";
-import { product } from "@/lib/config";
+import { loadSettings, product } from "@/lib/config";
 import { toPublicMachine } from "@/lib/models";
 import { parseCreateMachineRequest, ValidationError } from "@/lib/validation";
 
 export async function POST(request: Request) {
   try {
+    if (!loadSettings().allowUnpaidMachineCreate) {
+      return NextResponse.json(
+        { error: "Unpaid machine creation is disabled. Use POST /api/checkout." },
+        { status: 403 },
+      );
+    }
+
     const payload = await request.json();
     const createRequest = parseCreateMachineRequest(payload, product);
     const created = await createMachineService().createMachine(createRequest);

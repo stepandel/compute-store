@@ -11,6 +11,8 @@ describe("agent discovery", () => {
     assert.match(text, /HTTP 402/);
     assert.match(text, /Stripe-backed MPP payment credential/);
     assert.match(text, /Stripe Link CLI MPP SPT/);
+    assert.match(text, /spend request/i);
+    assert.match(text, /X-Checkout-Sandbox-Autopay/);
     assert.match(text, /Do not use Link CLI virtual cards/);
     assert.match(text, /Acceptable use/);
     assert.match(text, /Do not use machines for: Spam/);
@@ -27,7 +29,10 @@ describe("agent discovery", () => {
     assert.equal(manifest.payments.protocol, "mpp");
     assert.equal(manifest.payments.processor, "stripe");
     assert.deepEqual(manifest.payments.methods, ["stripe-spt"]);
+    assert.equal(manifest.payments.sandbox_autopay.request_header, "X-Checkout-Sandbox-Autopay: true");
     assert.equal(manifest.payment_client_guidance.recommended.id, "stripe-link-cli-mpp-spt");
+    assert.ok(manifest.payment_client_guidance.recommended.command_sequence[1].includes("--spend-request-id"));
+    assert.equal(manifest.payment_client_guidance.sandbox_testing.header, "X-Checkout-Sandbox-Autopay: true");
     assert.ok(manifest.payment_client_guidance.unsupported.some((item) => item.id === "link-cli-virtual-card"));
     assert.equal(manifest.acceptable_use_url, "http://localhost:3000/acceptable-use");
     assert.ok(manifest.checkout_guidance.some((item) => item.includes("HTTP 402")));

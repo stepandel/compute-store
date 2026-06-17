@@ -1,5 +1,11 @@
 import { NextResponse } from "next/server";
-import { CheckoutConfigurationError, checkoutComposeEntries, createMppCheckout, quoteCheckout } from "@/lib/checkout";
+import {
+  CheckoutConfigurationError,
+  checkoutComposeEntries,
+  createMppCheckout,
+  createSandboxCheckoutPayment,
+  quoteCheckout,
+} from "@/lib/checkout";
 import { product } from "@/lib/config";
 import { toPublicMachine } from "@/lib/models";
 import { createMachineService } from "@/lib/service";
@@ -12,6 +18,26 @@ export async function POST(request: Request) {
     const payload = await request.clone().json();
     const createRequest = parseCreateMachineRequest(payload, product);
     const quote = quoteCheckout(createRequest);
+
+    if (request.headers.get("x-checkout-sandbox-autopay") === "true") {
+      const sandboxPayment = await createSandboxCheckoutPayment(createRequest);
+      const created = await createMachineService().createMachine(createRequest);
+      return NextResponse.json(
+        {
+          checkout: {
+            status: "paid",
+            mode: sandboxPayment.mode,
+            quote,
+            stripe: {
+              payment_intent_id: sandboxPayment.payment_intent_id,
+            },
+          },
+          machine: toPublicMachine(created.lease, created.management),
+        },
+        { status: 202 },
+      );
+    }
+
     const checkout = createMppCheckout();
     const payment = await checkout.payment.compose(...checkoutComposeEntries(checkout, quote))(request);
 
@@ -25,6 +51,7 @@ export async function POST(request: Request) {
         {
           checkout: {
             status: "paid",
+            mode: "mpp",
             quote,
           },
           machine: toPublicMachine(created.lease, created.management),
