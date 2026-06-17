@@ -1,323 +1,204 @@
-"use client";
+import { headers } from "next/headers";
 
-import { FormEvent, useState } from "react";
+import { product } from "@/lib/config";
+import { CopyButton } from "./CopyButton";
+import { ClaudeLogo, CodexLogo, HermesLogo, OpenClawLogo } from "./logos";
 
-type PublicMachine = {
-  machine_id: string;
-  product: string;
-  provider: string;
-  status: "provisioning" | "active" | "terminating" | "terminated" | "failed";
-  host: string | null;
-  username: string;
-  created_at: string;
-  expires_at: string;
-  ssh_command?: string;
-  terminated_at?: string;
-  failure_reason?: string;
-  management?: ManagementTokens;
-};
+const AGENTS = [
+  { name: "Claude", Logo: ClaudeLogo },
+  { name: "Codex", Logo: CodexLogo },
+  { name: "Hermes", Logo: HermesLogo },
+  { name: "OpenClaw", Logo: OpenClawLogo },
+] as const;
 
-type ManagementTokens = {
-  read_token: string;
-  extend_token: string;
-  terminate_token: string;
-};
+function formatCents(cents: number): string {
+  return `$${(cents / 100).toFixed(2)}`;
+}
 
-type CheckoutResponse = {
-  checkout: {
-    status: "paid";
-    mode?: "mpp";
-    quote: {
-      amount: string;
-      currency: "usd";
-      base_fee_cents: number;
-      duration_minutes: number;
-      unit_price_cents_per_minute: number;
-    };
-  };
-  machine: PublicMachine;
-};
-
-export default function Home() {
-  const [duration, setDuration] = useState("60");
-  const [sshKey, setSshKey] = useState("");
-  const [machineId, setMachineId] = useState("");
-  const [readToken, setReadToken] = useState("");
-  const [extendToken, setExtendToken] = useState("");
-  const [terminateToken, setTerminateToken] = useState("");
-  const [extendMinutes, setExtendMinutes] = useState("15");
-  const [machine, setMachine] = useState<PublicMachine | null>(null);
-  const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
-
-  async function checkoutMachine(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setMessage("");
-
-    try {
-      const response = await fetch("/api/checkout", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          duration_minutes: Number(duration),
-          ssh_public_key: sshKey,
-        }),
-      });
-      const payload = await readJson(response);
-      if (!response.ok) {
-        setMessage(
-          response.status === 402
-            ? "Payment required. Retry this checkout request with an MPP payment credential."
-            : errorMessage(payload, "Checkout failed."),
-        );
-        return;
-      }
-      const checkout = payload as CheckoutResponse;
-      setMachine(checkout.machine);
-      setMachineId(checkout.machine.machine_id);
-      if (checkout.machine.management) {
-        setReadToken(checkout.machine.management.read_token);
-        setExtendToken(checkout.machine.management.extend_token);
-        setTerminateToken(checkout.machine.management.terminate_token);
-      }
-    } finally {
-      setBusy(false);
-    }
+async function resolveBaseUrl(): Promise<string> {
+  if (process.env.NEXT_PUBLIC_STORE_URL) {
+    return process.env.NEXT_PUBLIC_STORE_URL.replace(/\/$/, "");
   }
-
-  async function refreshMachine(id = machineId) {
-    if (!id) {
-      return;
-    }
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch(`/api/machines/${id}`, {
-        headers: bearerHeaders(readToken),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        setMessage(payload.error ?? "Machine not found.");
-        return;
-      }
-      setMachine(payload);
-      setMachineId(payload.machine_id);
-    } finally {
-      setBusy(false);
-    }
+  const h = await headers();
+  const host = h.get("host");
+  if (host) {
+    const proto = h.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
+    return `${proto}://${host}`;
   }
-
-  async function terminateMachine() {
-    if (!machine?.machine_id) {
-      return;
-    }
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch(`/api/machines/${machine.machine_id}`, {
-        method: "DELETE",
-        headers: bearerHeaders(terminateToken),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        setMessage(payload.error ?? "Terminate failed.");
-        return;
-      }
-      setMachine(payload);
-    } finally {
-      setBusy(false);
-    }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
   }
+  return "http://localhost:3000";
+}
 
-  async function extendMachine() {
-    if (!machine?.machine_id) {
-      return;
-    }
-    setBusy(true);
-    setMessage("");
-    try {
-      const response = await fetch(`/api/machines/${machine.machine_id}/extend`, {
-        method: "POST",
-        headers: {
-          "content-type": "application/json",
-          ...bearerHeaders(extendToken),
-        },
-        body: JSON.stringify({ additional_minutes: Number(extendMinutes) }),
-      });
-      const payload = await response.json();
-      if (!response.ok) {
-        setMessage(payload.error ?? "Extend failed.");
-        return;
-      }
-      setMachine(payload);
-    } finally {
-      setBusy(false);
-    }
-  }
+export default async function Home() {
+  const baseUrl = await resolveBaseUrl();
+  const baseFee = formatCents(Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99));
+  const perMinute = formatCents(Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5));
+
+  const agentPrompt = [
+    `You have access to an agentic compute storefront at ${baseUrl}.`,
+    `It leases temporary bare ${product.image} Linux machines with SSH access, billed per minute.`,
+    "",
+    `1. Read ${baseUrl}/llms.txt for the full machine-readable instructions.`,
+    `2. To buy, POST ${baseUrl}/api/checkout with JSON:`,
+    `   {"duration_minutes": 60, "ssh_public_key": "<your ssh public key>"}`,
+    "3. You will get an HTTP 402 with an MPP payment challenge. Pay it with the",
+    "   Stripe Link CLI (preferred) and retry the same request.",
+    "4. On success you receive SSH access plus read, extend, and terminate tokens.",
+    "   Treat the tokens as secrets and terminate the machine when you are done.",
+  ].join("\n");
 
   return (
     <main className="shell">
-      <section className="workbench">
-        <div className="intro">
-          <p className="eyebrow">Compute Storefront</p>
-          <h1>Bare Linux Machine Checkout</h1>
-        </div>
-
-        <form className="machine-form" onSubmit={checkoutMachine}>
-          <label>
-            <span>Duration</span>
-            <div className="duration-row">
-              <input
-                min="15"
-                max="360"
-                step="15"
-                value={duration}
-                onChange={(event) => setDuration(event.target.value)}
-                type="number"
-              />
-              <span>minutes</span>
-            </div>
-          </label>
-
-          <label>
-            <span>SSH public key</span>
-            <textarea
-              value={sshKey}
-              onChange={(event) => setSshKey(event.target.value)}
-              placeholder="ssh-ed25519 AAAA..."
-              rows={5}
-            />
-          </label>
-
-          <div className="actions">
-            <button disabled={busy} type="submit">
-              Start MPP Checkout
-            </button>
-            <button disabled={busy || !machineId} onClick={() => refreshMachine()} type="button" className="secondary">
-              Refresh
-            </button>
-          </div>
-
-          <p className="policy-note">
-            Checkout is for lawful, authorized compute only. Abuse, scanning, spam, malware, mining, and evasion are not
-            allowed. See <a href="/acceptable-use">acceptable use</a>.
+      <div className="page">
+        <header className="masthead">
+          <p className="eyebrow">
+            <span className="eyebrow-dot" aria-hidden="true" />
+            Agentic Compute Storefront
           </p>
-        </form>
+          <h1>
+            A store that only<br />sells to machines.
+          </h1>
+          <p className="lede">
+            No login, no cart, no human checkout. This storefront leases one product — a temporary bare {product.image}{" "}
+            Linux machine with SSH access — to autonomous agents over a small JSON API, paid for with an HTTP{" "}
+            <span className="amber">402</span> handshake. If you arrived as a person, hand the prompt below to your
+            agent.
+          </p>
+        </header>
 
-        <div className="lookup">
-          <label>
-            <span>Machine ID</span>
-            <input value={machineId} onChange={(event) => setMachineId(event.target.value)} />
-          </label>
-          <button disabled={busy || !machineId} onClick={() => refreshMachine()} type="button" className="secondary">
-            Load
-          </button>
-        </div>
-
-        <div className="token-grid">
-          <label>
-            <span>Read token</span>
-            <input value={readToken} onChange={(event) => setReadToken(event.target.value)} />
-          </label>
-          <label>
-            <span>Extend token</span>
-            <input value={extendToken} onChange={(event) => setExtendToken(event.target.value)} />
-          </label>
-          <label>
-            <span>Terminate token</span>
-            <input value={terminateToken} onChange={(event) => setTerminateToken(event.target.value)} />
-          </label>
-        </div>
-
-        {message ? <p className="message">{message}</p> : null}
-
-        {machine ? (
-          <section className="status-panel">
+        {/* Signature: the agent ↔ store handshake that defines this store. */}
+        <section className="handshake" aria-label="How an agent buys compute">
+          <div className="handshake-rail" aria-hidden="true" />
+          <ol className="exchange">
+            <li className="from-agent">
+              <span className="actor">agent</span>
+              <span className="arrow">→</span>
+              <code className="msg">POST /api/checkout</code>
+              <span className="note">duration + ssh key</span>
+            </li>
+            <li className="from-store amber-line">
+              <span className="actor">store</span>
+              <span className="arrow">←</span>
+              <code className="msg">402 Payment Required</code>
+              <span className="note status-wait">awaiting payment</span>
+            </li>
+            <li className="from-agent">
+              <span className="actor">agent</span>
+              <span className="arrow">→</span>
+              <code className="msg">pay · Stripe Link · retry</code>
+              <span className="note">shared payment token</span>
+            </li>
+            <li className="from-store ok-line">
+              <span className="actor">store</span>
+              <span className="arrow">←</span>
+              <code className="msg">200 OK · ssh root@host</code>
+              <span className="note status-ok">leased</span>
+            </li>
+          </ol>
+          <dl className="terms">
             <div>
-              <p className="eyebrow">Lease</p>
-              <h2>{machine.machine_id}</h2>
+              <dt>Lease</dt>
+              <dd>
+                {product.minDurationMinutes}–{product.maxDurationMinutes} min
+              </dd>
             </div>
-            <dl className="facts">
-              <div>
-                <dt>Status</dt>
-                <dd>
-                  <span className={`status ${machine.status}`}>{machine.status}</span>
-                </dd>
-              </div>
-              <div>
-                <dt>Provider</dt>
-                <dd>{machine.provider}</dd>
-              </div>
-              <div>
-                <dt>Host</dt>
-                <dd>{machine.host ?? "pending"}</dd>
-              </div>
-              <div>
-                <dt>Expires</dt>
-                <dd>{formatDate(machine.expires_at)}</dd>
-              </div>
-            </dl>
-
-            {machine.ssh_command ? <code className="ssh-command">{machine.ssh_command}</code> : null}
-            {machine.failure_reason ? <p className="message">{machine.failure_reason}</p> : null}
-
-            <div className="actions">
-              <button disabled={busy} onClick={() => refreshMachine(machine.machine_id)} type="button" className="secondary">
-                Refresh
-              </button>
-              <div className="extend-action">
-                <input
-                  min="1"
-                  max="360"
-                  value={extendMinutes}
-                  onChange={(event) => setExtendMinutes(event.target.value)}
-                  type="number"
-                />
-                <button
-                  disabled={busy || machine.status === "terminated" || machine.status === "failed"}
-                  onClick={extendMachine}
-                  type="button"
-                  className="secondary"
-                >
-                  Extend
-                </button>
-              </div>
-              <button
-                disabled={busy || machine.status === "terminated" || machine.status === "failed"}
-                onClick={terminateMachine}
-                type="button"
-                className="danger"
-              >
-                Terminate
-              </button>
+            <div>
+              <dt>Price</dt>
+              <dd>
+                {baseFee} + {perMinute}/min
+              </dd>
             </div>
-          </section>
-        ) : null}
-      </section>
+            <div>
+              <dt>Image</dt>
+              <dd>{product.image}</dd>
+            </div>
+            <div>
+              <dt>Region</dt>
+              <dd>{product.location}</dd>
+            </div>
+          </dl>
+        </section>
+
+        <section className="card prompt-card">
+          <div className="card-head">
+            <h2>Hand this to your agent</h2>
+            <CopyButton text={agentPrompt} label="Copy prompt" />
+          </div>
+          <pre className="prompt">{agentPrompt}</pre>
+        </section>
+
+        <section className="card">
+          <h2>Speaks to any MPP-capable agent</h2>
+          <p className="muted">
+            Any client that can read an MPP <code>402</code> challenge and retry with a credential works. Known to run
+            here:
+          </p>
+          <ul className="agent-grid">
+            {AGENTS.map(({ name, Logo }) => (
+              <li key={name} className="agent">
+                <span className="agent-logo">
+                  <Logo />
+                </span>
+                <span className="agent-name">{name}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+
+        <section className="card">
+          <h2>Payment</h2>
+          <p className="muted">
+            Virtual credit cards are accepted. The preferred method is <strong>Stripe Link</strong> via the{" "}
+            <strong>Link CLI</strong>, which mints a Shared Payment Token for the <span className="amber">402</span>{" "}
+            checkout.
+          </p>
+          <ol className="steps">
+            <li>
+              <code>POST /api/checkout</code> returns <code>402</code> with an MPP payment challenge.
+            </li>
+            <li>
+              Decode it and create an approved Link CLI spend request (<code>credential_type=shared_payment_token</code>
+              ).
+            </li>
+            <li>Pay the checkout endpoint with the spend request, then retry — the machine provisions on success.</li>
+          </ol>
+          <p className="muted small">
+            Any MPP client that can mint a Stripe Shared Payment Token also works. Manual card-entry forms and crypto
+            payment challenges are not exposed.
+          </p>
+        </section>
+
+        <section className="card">
+          <h2>Machine-readable entry points</h2>
+          <ul className="links">
+            <li>
+              <a href="/llms.txt">/llms.txt</a>
+              <span>Plain-text instructions for agents</span>
+            </li>
+            <li>
+              <a href="/.well-known/agent-storefront.json">/.well-known/agent-storefront.json</a>
+              <span>Full storefront manifest</span>
+            </li>
+            <li>
+              <a href="/openapi.json">/openapi.json</a>
+              <span>OpenAPI 3.1 specification</span>
+            </li>
+            <li>
+              <a href="/acceptable-use">/acceptable-use</a>
+              <span>Acceptable use policy</span>
+            </li>
+          </ul>
+        </section>
+
+        <footer className="foot">
+          <p>
+            Lawful, authorized compute only. Abuse, scanning, spam, malware, mining, and evasion are prohibited. See{" "}
+            <a href="/acceptable-use">acceptable use</a>.
+          </p>
+        </footer>
+      </div>
     </main>
   );
-}
-
-function bearerHeaders(token: string): HeadersInit {
-  return token ? { authorization: `Bearer ${token}` } : {};
-}
-
-function errorMessage(payload: Record<string, unknown>, fallback: string): string {
-  return typeof payload.error === "string" ? payload.error : fallback;
-}
-
-async function readJson(response: Response): Promise<Record<string, unknown>> {
-  try {
-    return (await response.json()) as Record<string, unknown>;
-  } catch {
-    return {};
-  }
-}
-
-function formatDate(value: string): string {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "medium",
-    timeStyle: "short",
-  }).format(new Date(value));
 }
