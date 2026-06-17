@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { toPublicMachine } from "@/lib/models";
 import { AuthorizationError, createMachineService } from "@/lib/service";
+import { enforceRateLimit } from "@/lib/ratelimit";
 
 type RouteContext = {
   params: Promise<{ id: string }>;
@@ -9,6 +10,10 @@ type RouteContext = {
 export async function GET(request: Request, context: RouteContext) {
   const { id } = await context.params;
   try {
+    const limited = await enforceRateLimit(request, "read");
+    if (limited) {
+      return limited;
+    }
     const lease = await createMachineService().getMachine(id, bearerToken(request));
     if (!lease) {
       return NextResponse.json({ error: "Machine not found." }, { status: 404 });
@@ -25,6 +30,10 @@ export async function GET(request: Request, context: RouteContext) {
 export async function DELETE(request: Request, context: RouteContext) {
   const { id } = await context.params;
   try {
+    const limited = await enforceRateLimit(request, "manage");
+    if (limited) {
+      return limited;
+    }
     const lease = await createMachineService().terminateMachine(id, bearerToken(request));
     if (!lease) {
       return NextResponse.json({ error: "Machine not found." }, { status: 404 });

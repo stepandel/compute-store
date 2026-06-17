@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { toPublicMachine } from "@/lib/models";
 import { AuthorizationError, createMachineService } from "@/lib/service";
+import { enforceRateLimit } from "@/lib/ratelimit";
 import { parseExtendMachineRequest, ValidationError } from "@/lib/validation";
 
 type RouteContext = {
@@ -10,6 +11,10 @@ type RouteContext = {
 export async function POST(request: Request, context: RouteContext) {
   const { id } = await context.params;
   try {
+    const limited = await enforceRateLimit(request, "manage");
+    if (limited) {
+      return limited;
+    }
     const additionalMinutes = parseExtendMachineRequest(await request.json());
     const lease = await createMachineService().extendMachine(id, bearerToken(request), additionalMinutes);
     if (!lease) {

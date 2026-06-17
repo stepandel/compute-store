@@ -24,6 +24,11 @@ export type CreatedMachine = {
   management: MachineManagementTokens;
 };
 
+// A lease still in "provisioning" past this age is treated as stuck (the
+// background provisioning task died before it could finish) and is failed by
+// the expiry cron so callers stop polling and the slot is freed.
+const PROVISION_TIMEOUT_MS = parsePositiveMinutes(process.env.PROVISION_TIMEOUT_MINUTES, 10) * 60_000;
+
 export class MachineService {
   constructor(
     private readonly store: LeaseStoreBackend,
@@ -55,8 +60,19 @@ export class MachineService {
 
     await this.store.create(lease);
     const management = await this.createCapabilities(lease);
-    await this.provision(lease.id);
-    return { lease: (await this.store.get(lease.id)) ?? lease, management };
+    // Provisioning (especially against a real provider) can take tens of
+    // seconds, which would blow the serverless request budget and — on the
+    // paid path — leave the buyer charged with no response. The lease and its
+    // management tokens are persisted here and returned immediately in the
+    // "provisioning" state; the caller triggers `provisionMachine` in the
+    // background (e.g. via `after()`) and polls with the read token.
+    return { lease, management };
+  }
+
+  // Drives a freshly created lease to "active" (or "failed"). Safe to run in a
+  // background task after the create response has been sent.
+  async provisionMachine(id: string): Promise<void> {
+    await this.provision(id);
   }
 
   async getMachine(id: string, bearerToken: string): Promise<MachineLease | null> {
@@ -124,6 +140,26 @@ export class MachineService {
       await this.terminateMachine(lease.id);
     }
     return expired.length;
+  }
+
+  // Safety net for the async provisioning path: if a background provisioning
+  // task dies before reaching "active", the lease would otherwise poll forever.
+  // The expiry cron calls this to fail leases stuck in "provisioning" and to
+  // best-effort release any provider resources they may have recorded.
+  async reapStuckProvisioning(now = new Date()): Promise<number> {
+    const cutoff = now.getTime() - PROVISION_TIMEOUT_MS;
+    const stuck = (await this.store.provisioningLeases()).filter(
+      (lease) => Date.parse(lease.createdAt) <= cutoff,
+    );
+    for (const lease of stuck) {
+      try {
+        await this.provider.terminate(lease);
+      } catch {
+        // Best effort: still mark the lease failed below.
+      }
+      await this.store.markFailed(lease.id, "Provisioning did not complete in time.");
+    }
+    return stuck.length;
   }
 
   private async provision(id: string): Promise<void> {
@@ -217,6 +253,14 @@ export function createMachineService() {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function parsePositiveMinutes(value: string | undefined, fallback: number): number {
+  if (!value) {
+    return fallback;
+  }
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function generateToken(prefix: string): string {

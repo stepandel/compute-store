@@ -7,8 +7,10 @@ export async function GET(request: Request) {
     return unauthorized;
   }
 
-  const expired = await createMachineService().expireDueMachines();
-  return NextResponse.json({ expired });
+  const service = createMachineService();
+  const expired = await service.expireDueMachines();
+  const reaped = await service.reapStuckProvisioning();
+  return NextResponse.json({ expired, reaped });
 }
 
 export async function POST(request: Request) {

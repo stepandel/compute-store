@@ -65,6 +65,20 @@ describe("compute storefront", () => {
     }
   });
 
+  it("rejects oversized SSH public keys", () => {
+    assert.throws(
+      () =>
+        parseCreateMachineRequest(
+          {
+            duration_minutes: 60,
+            ssh_public_key: `ssh-ed25519 ${"A".repeat(9000)}`,
+          },
+          product,
+        ),
+      ValidationError,
+    );
+  });
+
   it("rejects durations outside policy", () => {
     assert.throws(
       () =>
@@ -79,23 +93,50 @@ describe("compute storefront", () => {
     );
   });
 
-  it("creates a machine that becomes active", async () => {
-    const created = await service.createMachine({
+  it("returns a provisioning lease with tokens before provisioning runs", async () => {
+    const { lease, management } = await service.createMachine({
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
 
-    const { lease, management } = created;
-    assert.equal(lease.status, "active");
+    // Tokens are issued synchronously so a serverless timeout during background
+    // provisioning never leaves the buyer charged without management access.
+    assert.equal(lease.status, "provisioning");
+    assert.equal(lease.host, null);
     assert.match(management.read_token, /^mt_read_/);
     assert.match(management.extend_token, /^mt_extend_/);
     assert.match(management.terminate_token, /^mt_term_/);
+  });
+
+  it("creates a machine that becomes active once provisioned", async () => {
+    const { lease, management } = await service.createMachine({
+      durationMinutes: 60,
+      sshPublicKey: VALID_KEY,
+    });
+
+    await service.provisionMachine(lease.id);
 
     const active = await service.getMachine(lease.id, management.read_token);
     assert.ok(active);
     assert.equal(active.status, "active");
     assert.equal(active.host, "203.0.113.10");
     assert.equal(toPublicMachine(active).ssh_command, "ssh root@203.0.113.10");
+  });
+
+  it("fails leases stuck in provisioning past the timeout", async () => {
+    const { lease, management } = await service.createMachine({
+      durationMinutes: 60,
+      sshPublicKey: VALID_KEY,
+    });
+
+    // Provisioning never ran; reap it as though the cron found it stale.
+    const reaped = await service.reapStuckProvisioning(new Date(Date.now() + 60 * 60_000));
+    assert.equal(reaped, 1);
+
+    const failed = await service.getMachine(lease.id, management.read_token);
+    assert.ok(failed);
+    assert.equal(failed.status, "failed");
+    assert.match(failed.failureReason ?? "", /did not complete/);
   });
 
   it("requires the right capability token to read a machine", async () => {
@@ -129,6 +170,7 @@ describe("compute storefront", () => {
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
+    await service.provisionMachine(lease.id);
     await waitForMachine(lease.id, management.read_token, (machine) => machine.status === "active");
 
     await assert.rejects(() => service.terminateMachine(lease.id, management.read_token), AuthorizationError);
@@ -144,6 +186,7 @@ describe("compute storefront", () => {
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
+    await service.provisionMachine(lease.id);
     await waitForMachine(lease.id, management.read_token, (machine) => machine.status === "active");
 
     await assert.rejects(() => service.extendMachine(lease.id, management.read_token, 15), AuthorizationError);

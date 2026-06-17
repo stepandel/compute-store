@@ -4,6 +4,10 @@ import type { CreateMachineRequest } from "@/lib/models";
 const SSH_PUBLIC_KEY_RE =
   /^(ssh-ed25519|ssh-rsa|ecdsa-sha2-nistp256|ecdsa-sha2-nistp384|ecdsa-sha2-nistp521) [A-Za-z0-9+/=]+(?: .*)?$/;
 
+// A 4096-bit RSA key in OpenSSH format is ~750 chars; 8 KB leaves generous
+// headroom while preventing oversized keys from bloating the lease store.
+const MAX_SSH_PUBLIC_KEY_LENGTH = 8 * 1024;
+
 export class ValidationError extends Error {}
 
 export function parseCreateMachineRequest(payload: unknown, product: Product): CreateMachineRequest {
@@ -23,7 +27,14 @@ export function parseCreateMachineRequest(payload: unknown, product: Product): C
       `duration_minutes must be between ${product.minDurationMinutes} and ${product.maxDurationMinutes}.`,
     );
   }
-  if (typeof sshPublicKey !== "string" || !SSH_PUBLIC_KEY_RE.test(sshPublicKey.trim())) {
+  if (typeof sshPublicKey !== "string") {
+    throw new ValidationError("ssh_public_key must be a valid SSH public key.");
+  }
+  const trimmedKey = sshPublicKey.trim();
+  if (trimmedKey.length > MAX_SSH_PUBLIC_KEY_LENGTH) {
+    throw new ValidationError(`ssh_public_key must be at most ${MAX_SSH_PUBLIC_KEY_LENGTH} characters.`);
+  }
+  if (!SSH_PUBLIC_KEY_RE.test(trimmedKey)) {
     throw new ValidationError("ssh_public_key must be a valid SSH public key.");
   }
 

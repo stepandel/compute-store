@@ -1,11 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextResponse, after } from "next/server";
 import { createMachineService } from "@/lib/service";
 import { loadSettings, product } from "@/lib/config";
 import { toPublicMachine } from "@/lib/models";
 import { parseCreateMachineRequest, ValidationError } from "@/lib/validation";
+import { enforceRateLimit } from "@/lib/ratelimit";
 
 export async function POST(request: Request) {
   try {
+    const limited = await enforceRateLimit(request, "create");
+    if (limited) {
+      return limited;
+    }
+
     if (!loadSettings().allowUnpaidMachineCreate) {
       return NextResponse.json(
         { error: "Unpaid machine creation is disabled. Use POST /api/checkout." },
@@ -15,7 +21,9 @@ export async function POST(request: Request) {
 
     const payload = await request.json();
     const createRequest = parseCreateMachineRequest(payload, product);
-    const created = await createMachineService().createMachine(createRequest);
+    const service = createMachineService();
+    const created = await service.createMachine(createRequest);
+    after(() => service.provisionMachine(created.lease.id));
     return NextResponse.json(toPublicMachine(created.lease, created.management), { status: 202 });
   } catch (error) {
     if (error instanceof SyntaxError) {

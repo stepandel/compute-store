@@ -26,6 +26,7 @@ export interface LeaseStoreBackend {
   markTerminated(id: string): Promise<void>;
   extendLease(id: string, expiresAt: string): Promise<void>;
   expiredLeases(now?: Date): Promise<MachineLease[]>;
+  provisioningLeases(): Promise<MachineLease[]>;
 }
 
 export class FileLeaseStore implements LeaseStoreBackend {
@@ -115,6 +116,11 @@ export class FileLeaseStore implements LeaseStoreBackend {
     return data.machines
       .filter((lease) => isExpirable(lease.status) && Date.parse(lease.expiresAt) <= now.getTime())
       .sort((a, b) => Date.parse(a.expiresAt) - Date.parse(b.expiresAt));
+  }
+
+  async provisioningLeases(): Promise<MachineLease[]> {
+    const data = await this.read();
+    return data.machines.filter((lease) => lease.status === "provisioning");
   }
 
   private async patch(id: string, updates: Partial<MachineLease>): Promise<void> {
@@ -244,6 +250,11 @@ export class RedisRestLeaseStore implements LeaseStoreBackend {
     return data.machines
       .filter((lease) => isExpirable(lease.status) && Date.parse(lease.expiresAt) <= now.getTime())
       .sort((a, b) => Date.parse(a.expiresAt) - Date.parse(b.expiresAt));
+  }
+
+  async provisioningLeases(): Promise<MachineLease[]> {
+    const data = await this.read();
+    return data.machines.filter((lease) => lease.status === "provisioning");
   }
 
   private async patch(id: string, updates: Partial<MachineLease>): Promise<void> {
