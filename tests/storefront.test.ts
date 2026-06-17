@@ -86,12 +86,13 @@ describe("compute storefront", () => {
     });
 
     const { lease, management } = created;
-    assert.equal(lease.status, "provisioning");
+    assert.equal(lease.status, "active");
     assert.match(management.read_token, /^mt_read_/);
     assert.match(management.extend_token, /^mt_extend_/);
     assert.match(management.terminate_token, /^mt_term_/);
 
-    const active = await waitForMachine(lease.id, management.read_token, (machine) => machine.status === "active");
+    const active = await service.getMachine(lease.id, management.read_token);
+    assert.ok(active);
     assert.equal(active.status, "active");
     assert.equal(active.host, "203.0.113.10");
     assert.equal(toPublicMachine(active).ssh_command, "ssh root@203.0.113.10");

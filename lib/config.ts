@@ -13,6 +13,10 @@ export type ProviderName = "dry-run" | "hetzner";
 
 export type Settings = {
   dataPath: string;
+  leaseStore: LeaseStoreName;
+  redisRestUrl?: string;
+  redisRestToken?: string;
+  redisRestKey: string;
   provider: ProviderName;
   hetznerApiToken?: string;
   allowUnpaidMachineCreate: boolean;
@@ -20,6 +24,7 @@ export type Settings = {
   checkout: CheckoutSettings;
 };
 
+export type LeaseStoreName = "file" | "redis-rest";
 export type CheckoutSettings = {
   baseFeeCents: number;
   priceCentsPerMinute: number;
@@ -43,6 +48,7 @@ export const product: Product = {
 
 export function loadSettings(): Settings {
   const provider = (process.env.PROVIDER ?? "dry-run") as ProviderName;
+  const leaseStore = (process.env.LEASE_STORE ?? "file") as LeaseStoreName;
   const baseFeeCents = parseNonNegativeInteger(process.env.CHECKOUT_BASE_FEE_CENTS, "CHECKOUT_BASE_FEE_CENTS", 99);
   const priceCentsPerMinute = parsePositiveInteger(
     process.env.PRICE_CENTS_PER_MINUTE,
@@ -53,9 +59,22 @@ export function loadSettings(): Settings {
   if (provider !== "dry-run" && provider !== "hetzner") {
     throw new Error(`Unsupported provider: ${provider}`);
   }
+  if (leaseStore !== "file" && leaseStore !== "redis-rest") {
+    throw new Error(`Unsupported lease store: ${leaseStore}`);
+  }
+  if (process.env.NODE_ENV === "production" && provider !== "dry-run" && leaseStore === "file") {
+    throw new Error("LEASE_STORE=redis-rest is required in production when real provisioning is enabled.");
+  }
+  if (leaseStore === "redis-rest" && (!process.env.REDIS_REST_URL || !process.env.REDIS_REST_TOKEN)) {
+    throw new Error("REDIS_REST_URL and REDIS_REST_TOKEN are required when LEASE_STORE=redis-rest.");
+  }
 
   return {
     dataPath: process.env.DATA_PATH ?? "data/machines.json",
+    leaseStore,
+    redisRestUrl: process.env.REDIS_REST_URL,
+    redisRestToken: process.env.REDIS_REST_TOKEN,
+    redisRestKey: process.env.REDIS_REST_KEY ?? "checkout-proto:leases",
     provider,
     hetznerApiToken: process.env.HETZNER_API_TOKEN,
     allowUnpaidMachineCreate: process.env.ALLOW_UNPAID_MACHINE_CREATE === "true" || provider === "dry-run",

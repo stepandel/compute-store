@@ -8,7 +8,7 @@ import type {
   MachineLease,
   MachineManagementTokens,
 } from "@/lib/models";
-import { LeaseStore } from "@/lib/store";
+import { FileLeaseStore, RedisRestLeaseStore, type LeaseStoreBackend } from "@/lib/store";
 
 export class AuthorizationError extends Error {
   constructor(
@@ -26,7 +26,7 @@ export type CreatedMachine = {
 
 export class MachineService {
   constructor(
-    private readonly store: LeaseStore,
+    private readonly store: LeaseStoreBackend,
     private readonly provider: ComputeProvider,
     private readonly product: Product,
     private readonly providerName: ProviderName,
@@ -54,8 +54,8 @@ export class MachineService {
 
     await this.store.create(lease);
     const management = await this.createCapabilities(lease);
-    this.provision(lease.id).catch(() => undefined);
-    return { lease, management };
+    await this.provision(lease.id);
+    return { lease: (await this.store.get(lease.id)) ?? lease, management };
   }
 
   async getMachine(id: string, bearerToken: string): Promise<MachineLease | null> {
@@ -203,7 +203,9 @@ export class MachineService {
 export function createMachineService() {
   const settings = loadSettings();
   return new MachineService(
-    new LeaseStore(settings.dataPath),
+    settings.leaseStore === "redis-rest"
+      ? new RedisRestLeaseStore(settings.redisRestUrl!, settings.redisRestToken!, settings.redisRestKey)
+      : new FileLeaseStore(settings.dataPath),
     buildProvider(settings),
     settings.product,
     settings.provider,
