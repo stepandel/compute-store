@@ -15,8 +15,8 @@ The app is intentionally narrow:
 ## Run
 
 ```bash
-npm install
-npm run dev
+bun install
+bun run dev
 ```
 
 Open `http://localhost:3000`.
@@ -34,7 +34,7 @@ To use Hetzner for real provisioning:
 ```bash
 PROVIDER=hetzner
 HETZNER_API_TOKEN=...
-npm run dev
+bun run dev
 ```
 
 The Hetzner adapter is configured for a small Ubuntu machine:
@@ -131,7 +131,7 @@ Agents should start with `/llms.txt` for terse operating instructions, then use 
 ## Tests
 
 ```bash
-npm run typecheck
-npm test
-npm run build
+bun run typecheck
+bun test
+bun run build
 ```
