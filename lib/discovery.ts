@@ -33,6 +33,8 @@ const paymentClientGuidance = {
       "Use the same MPP checkout path with Stripe test-mode credentials. If the decoded challenge network_id starts with profile_test_, create the shared_payment_token spend request with --test so Link CLI provisions a test SPT instead of a real payment credential.",
     command_note:
       "Add --test to the spend-request create command when paying a profile_test_... sandbox challenge.",
+    fallback_note:
+      "Some Stripe sandbox accounts cannot grant network-scoped Shared Payment Tokens (the SPT grant rejects seller_details[network_id] with 'Received unknown parameter'). When that happens, Link CLI reports the spend request as approved but never attaches a shared_payment_token, so `mpp pay` fails locally with 'Spend request does not have a shared payment token'. Do not retry Link CLI in that case — fall back to the account-scoped test SPT client below (id: mppx-cli-account-scoped-test-spt).",
   },
   also_supported: [
     {
@@ -41,6 +43,18 @@ const paymentClientGuidance = {
       summary:
         "Any client that can read the Payment WWW-Authenticate challenge, create a Stripe Shared Payment Token for the advertised network/profile, and retry with Authorization: Payment is supported.",
       credential_type: "shared_payment_token",
+    },
+    {
+      id: "mppx-cli-account-scoped-test-spt",
+      name: "mppx CLI (sandbox account-scoped test SPT)",
+      summary:
+        "Sandbox-only fallback for when the seller's Stripe account cannot grant network-scoped SPTs (see payment_client_guidance.sandbox_testing.fallback_note). The mppx CLI provisions an account-scoped test SPT via POST /v1/test_helpers/shared_payment/granted_tokens (using a Stripe test secret key for the seller profile's account; in this self-contained sandbox that is the storefront's own STRIPE_SECRET_KEY) and retries the same 402 checkout with Authorization: Payment. Charges a Stripe test PaymentIntent only — no real money.",
+      credential_type: "shared_payment_token",
+      applies_when:
+        "Sandbox challenges (network_id starts with profile_test_) AND Link CLI never mints a shared_payment_token.",
+      command_sequence: [
+        "MPPX_STRIPE_SECRET_KEY=sk_test_... npx mppx {service_url}/api/checkout -X POST -J '{\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}' -M paymentMethod=pm_card_visa",
+      ],
     },
   ],
   unsupported: [
@@ -214,6 +228,9 @@ Payment client guidance:
 - Create the SPT spend request: ${paymentClientGuidance.recommended.command_sequence[2]}
 - Pay the checkout endpoint: ${paymentClientGuidance.recommended.command_sequence[3].replace("{service_url}", serviceUrl)}
 - Sandbox test path: use the same MPP flow with STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and add --test to the Link CLI spend-request create command when the decoded network_id starts with profile_test_...
+- Sandbox fallback (account-scoped test SPT): some Stripe sandbox accounts cannot grant network-scoped SPTs (the grant rejects seller_details[network_id] with "Received unknown parameter"). Symptom: Link CLI marks the spend request approved but never attaches a shared_payment_token, so "mpp pay" fails locally with "Spend request does not have a shared payment token". Do not retry Link CLI. Instead pay with the mppx CLI, which mints an account-scoped test SPT via POST /v1/test_helpers/shared_payment/granted_tokens and retries with Authorization: Payment:
+    MPPX_STRIPE_SECRET_KEY=sk_test_... npx mppx ${serviceUrl}/api/checkout -X POST -J '{"duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}' -M paymentMethod=pm_card_visa
+  (Use a Stripe test secret key for the seller profile's account; in this self-contained sandbox that is the storefront's own STRIPE_SECRET_KEY. Test mode only — charges a Stripe test PaymentIntent, no real money.)
 - Also supported: any MPP client that can create a Stripe Shared Payment Token for the advertised challenge and retry with Authorization: Payment.
 - Do not use Link CLI virtual cards; this API does not expose a standard card checkout form.
 - Do not use manual card entry or crypto payment clients; they are not accepted by this storefront.
