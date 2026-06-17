@@ -1,0 +1,2 @@
+"""Agentic compute storefront prototype."""
+
