@@ -153,16 +153,45 @@ describe("compute storefront", () => {
     assert.equal(readable.id, lease.id);
   });
 
-  it("returns missing machines before validating capabilities", async () => {
+  it("rejects management of any id without a valid capability token", async () => {
     const missingId = "machine_0000000000000000";
 
-    const missingRead = await service.getMachine(missingId, "");
-    const missingTerminate = await service.terminateMachine(missingId, "not-a-real-token");
-    const missingExtend = await service.extendMachine(missingId, "not-a-real-token", 15);
+    // Authorize-first: a caller without a valid token can't tell a real id from
+    // a missing one — every path rejects rather than leaking 404-vs-401.
+    await assert.rejects(() => service.getMachine(missingId, ""), AuthorizationError);
+    await assert.rejects(() => service.terminateMachine(missingId, "not-a-real-token"), AuthorizationError);
+    await assert.rejects(() => service.extendMachine(missingId, "not-a-real-token", 15), AuthorizationError);
+  });
 
-    assert.equal(missingRead, null);
-    assert.equal(missingTerminate, null);
-    assert.equal(missingExtend, null);
+  it("never terminates a machine without a token (no empty-token bypass)", async () => {
+    const { lease, management } = await service.createMachine({
+      durationMinutes: 60,
+      sshPublicKey: VALID_KEY,
+    });
+    await service.provisionMachine(lease.id);
+
+    // An empty bearer token must NOT skip authorization.
+    await assert.rejects(() => service.terminateMachine(lease.id, ""), AuthorizationError);
+
+    const stillThere = await service.getMachine(lease.id, management.read_token);
+    assert.ok(stillThere);
+    assert.notEqual(stillThere.status, "terminated");
+  });
+
+  it("prunes retired leases and their tokens after the retention window", async () => {
+    const { lease, management } = await service.createMachine({
+      durationMinutes: 60,
+      sshPublicKey: VALID_KEY,
+    });
+    await service.provisionMachine(lease.id);
+    await service.terminateMachine(lease.id, management.terminate_token);
+
+    // Pretend the retention window has fully elapsed.
+    const removed = await service.pruneRetiredMachines(new Date(Date.now() + 48 * 60 * 60_000));
+    assert.equal(removed, 1);
+
+    assert.equal(await store.get(lease.id), null);
+    await assert.rejects(() => service.getMachine(lease.id, management.read_token), AuthorizationError);
   });
 
   it("terminates a machine", async () => {

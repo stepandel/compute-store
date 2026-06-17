@@ -27,6 +27,35 @@ export interface LeaseStoreBackend {
   extendLease(id: string, expiresAt: string): Promise<void>;
   expiredLeases(now?: Date): Promise<MachineLease[]>;
   provisioningLeases(): Promise<MachineLease[]>;
+  pruneRetired(now: Date, retentionMs: number): Promise<number>;
+}
+
+function isRetired(status: MachineStatus): boolean {
+  return status === "terminated" || status === "failed";
+}
+
+// A lease is prunable once it has reached a terminal state and its most recent
+// relevant timestamp is older than the retention window.
+function prunableBefore(lease: MachineLease, cutoff: number): boolean {
+  if (!isRetired(lease.status)) {
+    return false;
+  }
+  const stamp = Date.parse(lease.terminatedAt ?? lease.expiresAt);
+  return Number.isFinite(stamp) && stamp <= cutoff;
+}
+
+function applyPrune(data: StoreFile, cutoff: number): { data: StoreFile; removed: number } {
+  const pruned = new Set(data.machines.filter((lease) => prunableBefore(lease, cutoff)).map((lease) => lease.id));
+  if (pruned.size === 0) {
+    return { data, removed: 0 };
+  }
+  return {
+    data: {
+      machines: data.machines.filter((lease) => !pruned.has(lease.id)),
+      capabilityTokens: data.capabilityTokens.filter((token) => !pruned.has(token.machineId)),
+    },
+    removed: pruned.size,
+  };
 }
 
 export class FileLeaseStore implements LeaseStoreBackend {
@@ -121,6 +150,16 @@ export class FileLeaseStore implements LeaseStoreBackend {
   async provisioningLeases(): Promise<MachineLease[]> {
     const data = await this.read();
     return data.machines.filter((lease) => lease.status === "provisioning");
+  }
+
+  async pruneRetired(now: Date, retentionMs: number): Promise<number> {
+    let removed = 0;
+    await this.update((data) => {
+      const result = applyPrune(data, now.getTime() - retentionMs);
+      removed = result.removed;
+      return result.data;
+    });
+    return removed;
   }
 
   private async patch(id: string, updates: Partial<MachineLease>): Promise<void> {
@@ -255,6 +294,16 @@ export class RedisRestLeaseStore implements LeaseStoreBackend {
   async provisioningLeases(): Promise<MachineLease[]> {
     const data = await this.read();
     return data.machines.filter((lease) => lease.status === "provisioning");
+  }
+
+  async pruneRetired(now: Date, retentionMs: number): Promise<number> {
+    let removed = 0;
+    await this.update((data) => {
+      const result = applyPrune(data, now.getTime() - retentionMs);
+      removed = result.removed;
+      return result.data;
+    });
+    return removed;
   }
 
   private async patch(id: string, updates: Partial<MachineLease>): Promise<void> {

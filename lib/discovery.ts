@@ -1,7 +1,19 @@
 import { product } from "@/lib/config";
 import { acceptableUsePath, prohibitedUses } from "@/lib/policy";
 
-const serviceUrl = process.env.NEXT_PUBLIC_STORE_URL ?? "http://localhost:3000";
+const serviceUrl = resolveServiceUrl();
+
+// Prefer an explicit public URL; on Vercel fall back to the deployment URL so
+// discovery/OpenAPI never silently advertise localhost in a deployed env.
+function resolveServiceUrl(): string {
+  if (process.env.NEXT_PUBLIC_STORE_URL) {
+    return process.env.NEXT_PUBLIC_STORE_URL;
+  }
+  if (process.env.VERCEL_URL) {
+    return `https://${process.env.VERCEL_URL}`;
+  }
+  return "http://localhost:3000";
+}
 const acceptableUseUrl = new URL(acceptableUsePath, serviceUrl).toString();
 
 const checkoutGuidance = [

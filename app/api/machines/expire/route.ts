@@ -1,3 +1,4 @@
+import { timingSafeEqual } from "node:crypto";
 import { NextResponse } from "next/server";
 import { createMachineService } from "@/lib/service";
 
@@ -10,7 +11,8 @@ export async function GET(request: Request) {
   const service = createMachineService();
   const expired = await service.expireDueMachines();
   const reaped = await service.reapStuckProvisioning();
-  return NextResponse.json({ expired, reaped });
+  const pruned = await service.pruneRetiredMachines();
+  return NextResponse.json({ expired, reaped, pruned });
 }
 
 export async function POST(request: Request) {
@@ -28,10 +30,16 @@ function authorizeCron(request: Request): NextResponse | null {
     return null;
   }
 
-  const authHeader = request.headers.get("authorization");
-  if (authHeader !== `Bearer ${secret}`) {
+  const authHeader = request.headers.get("authorization") ?? "";
+  if (!constantTimeEqual(authHeader, `Bearer ${secret}`)) {
     return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
   }
 
   return null;
+}
+
+function constantTimeEqual(left: string, right: string): boolean {
+  const leftBuffer = Buffer.from(left);
+  const rightBuffer = Buffer.from(right);
+  return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
 }

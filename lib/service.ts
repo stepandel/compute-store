@@ -29,6 +29,10 @@ export type CreatedMachine = {
 // the expiry cron so callers stop polling and the slot is freed.
 const PROVISION_TIMEOUT_MS = parsePositiveMinutes(process.env.PROVISION_TIMEOUT_MINUTES, 10) * 60_000;
 
+// Terminated/failed leases are kept this long (for status reads / receipts)
+// before the expiry cron prunes them from the store.
+const PRUNE_RETENTION_MS = parsePositiveMinutes(process.env.PRUNE_RETENTION_MINUTES, 24 * 60) * 60_000;
+
 export class MachineService {
   constructor(
     private readonly store: LeaseStoreBackend,
@@ -38,8 +42,6 @@ export class MachineService {
   ) {}
 
   async createMachine(request: CreateMachineRequest): Promise<CreatedMachine> {
-    await this.expireDueMachines();
-
     const now = new Date();
     const lease: MachineLease = {
       id: `machine_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
@@ -76,22 +78,19 @@ export class MachineService {
   }
 
   async getMachine(id: string, bearerToken: string): Promise<MachineLease | null> {
-    await this.expireDueMachines();
-    const lease = await this.store.get(id);
-    if (!lease) {
-      return null;
-    }
+    // Authorize before any existence check so a caller without a valid
+    // capability token can't distinguish real machine IDs (401/403) from
+    // non-existent ones (404).
     await this.authorize(id, bearerToken, "read");
-    return lease;
+    return this.store.get(id);
   }
 
   async extendMachine(id: string, bearerToken: string, additionalMinutes: number): Promise<MachineLease | null> {
-    await this.expireDueMachines();
+    await this.authorize(id, bearerToken, "extend");
     const lease = await this.store.get(id);
     if (!lease) {
       return null;
     }
-    await this.authorize(id, bearerToken, "extend");
     if (lease.status !== "active" && lease.status !== "provisioning") {
       throw new Error(`Cannot extend a machine with status ${lease.status}.`);
     }
@@ -108,13 +107,29 @@ export class MachineService {
     return this.store.get(id);
   }
 
-  async terminateMachine(id: string, bearerToken?: string): Promise<MachineLease | null> {
+  async terminateMachine(id: string, bearerToken: string): Promise<MachineLease | null> {
+    // A capability token is ALWAYS required on the public path. (A prior
+    // version skipped auth when the token was an empty string, which let an
+    // unauthenticated DELETE terminate any machine by id.) Authorize before the
+    // existence check so missing ids don't leak via 404-vs-401.
+    await this.authorize(id, bearerToken, "terminate");
+    return this.terminateLease(id);
+  }
+
+  async expireDueMachines(): Promise<number> {
+    const expired = await this.store.expiredLeases();
+    for (const lease of expired) {
+      await this.terminateLease(lease.id);
+    }
+    return expired.length;
+  }
+
+  // Internal, unauthenticated termination used only by trusted lifecycle paths
+  // (expiry cron, post-payment cleanup). Never call this directly from a route.
+  private async terminateLease(id: string): Promise<MachineLease | null> {
     const existingLease = await this.store.get(id);
     if (!existingLease) {
       return null;
-    }
-    if (bearerToken) {
-      await this.authorize(id, bearerToken, "terminate");
     }
     const lease = await this.store.markTerminating(id);
     if (!lease) {
@@ -128,18 +143,19 @@ export class MachineService {
       await this.provider.terminate(lease);
       await this.store.markTerminated(id);
     } catch (error) {
-      await this.store.markFailed(id, errorMessage(error));
+      // Keep the provider detail in server logs; expose only a generic reason.
+      console.error(`Provider termination failed for ${id}: ${errorMessage(error)}`);
+      await this.store.markFailed(id, "Termination failed.");
     }
 
     return this.store.get(id);
   }
 
-  async expireDueMachines(): Promise<number> {
-    const expired = await this.store.expiredLeases();
-    for (const lease of expired) {
-      await this.terminateMachine(lease.id);
-    }
-    return expired.length;
+  // Removes terminated/failed leases (and their capability tokens) whose
+  // terminal timestamp is older than the retention window, bounding the growth
+  // of the lease store. Called from the expiry cron.
+  async pruneRetiredMachines(now = new Date()): Promise<number> {
+    return this.store.pruneRetired(now, PRUNE_RETENTION_MS);
   }
 
   // Safety net for the async provisioning path: if a background provisioning
@@ -192,7 +208,10 @@ export class MachineService {
         machine.providerFirewallId,
       );
     } catch (error) {
-      await this.store.markFailed(id, errorMessage(error));
+      // Keep the provider detail in server logs; expose only a generic reason
+      // so raw upstream API error bodies aren't surfaced to the lease holder.
+      console.error(`Provisioning failed for ${id}: ${errorMessage(error)}`);
+      await this.store.markFailed(id, "Provisioning failed.");
     }
   }
 
