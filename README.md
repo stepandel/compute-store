@@ -6,6 +6,7 @@ The app is intentionally narrow:
 
 - One product: `bare-linux-machine`
 - One request shape: duration plus SSH public key
+- One paid checkout flow: MPP `402 Payment Required`, then provision after payment
 - One lifecycle: create, poll, extend, terminate, expire
 - Resource-scoped lease capability tokens for management
 - One local persistence layer: JSON file storage
@@ -27,7 +28,24 @@ Useful env vars:
 DATA_PATH=data/machines.json
 PROVIDER=dry-run
 CRON_SECRET=replace-with-random-secret
+MPP_SECRET_KEY=replace-with-random-base64-secret
+STRIPE_SECRET_KEY=sk_test_...
+STRIPE_PROFILE_ID=profile_test_...
+STRIPE_PAYMENT_METHOD_TYPES=card,link
+PRICE_CENTS_PER_MINUTE=5
 ```
+
+Generate `MPP_SECRET_KEY` with:
+
+```bash
+openssl rand -base64 32
+```
+
+Paid checkout is exposed at `POST /api/checkout`. It follows the MPP pattern used by agentic checkout examples such as PostalForm and Prospect Butcher Co.: submit the order details, receive an HTTP `402` payment challenge if no credential is present, retry with an MPP payment credential, and then receive the fulfilled resource.
+
+For Stripe SPT/card-style MPP payments, create a Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_test_...` or `profile_...` value. The default accepted SPT-backed payment methods are `card,link`.
+
+Tempo USDC MPP payments are optional. Set `TEMPO_RECIPIENT_ADDRESS=0x...` to advertise a Tempo challenge as well. `TEMPO_TESTNET=true` is the default for local development.
 
 To use Hetzner for real provisioning:
 
@@ -56,7 +74,44 @@ curl -s http://localhost:3000/.well-known/agent-storefront.json
 curl -s http://localhost:3000/openapi.json
 ```
 
-Create a machine:
+Paid checkout for a machine:
+
+```bash
+curl -i http://localhost:3000/api/checkout \
+  -H 'content-type: application/json' \
+  -d '{
+    "duration_minutes": 60,
+    "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey user@example"
+  }'
+```
+
+Without an MPP credential, the response is `402 Payment Required` with `WWW-Authenticate` payment challenges. Retry the same request with a valid MPP payment credential to receive:
+
+```json
+{
+  "checkout": {
+    "status": "paid",
+    "quote": {
+      "product_id": "bare-linux-machine",
+      "duration_minutes": 60,
+      "unit_price_cents_per_minute": 5,
+      "amount_cents": 300,
+      "amount": "3.00",
+      "currency": "usd"
+    }
+  },
+  "machine": {
+    "machine_id": "machine_...",
+    "management": {
+      "read_token": "mt_read_...",
+      "extend_token": "mt_extend_...",
+      "terminate_token": "mt_term_..."
+    }
+  }
+}
+```
+
+The unpaid local/dev provisioning endpoint remains available:
 
 ```bash
 curl -s http://localhost:3000/api/machines \
@@ -107,9 +162,10 @@ curl -s http://localhost:3000/api/health
 
 ```mermaid
 flowchart TD
-  A["Agent or UI"] --> B["Next.js API Routes"]
+  A["Agent or UI"] --> B["POST /api/checkout"]
   B --> C["Validate duration + SSH key"]
-  C --> D["Create lease in JSON store"]
+  C --> P["MPP payment challenge or receipt"]
+  P --> D["Create lease in JSON store"]
   D --> E["Provider creates server"]
   E --> F["Store host + provider ids"]
   D --> J["Return read / extend / terminate capability tokens"]

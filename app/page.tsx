@@ -23,6 +23,19 @@ type ManagementTokens = {
   terminate_token: string;
 };
 
+type CheckoutResponse = {
+  checkout: {
+    status: "paid";
+    quote: {
+      amount: string;
+      currency: "usd";
+      duration_minutes: number;
+      unit_price_cents_per_minute: number;
+    };
+  };
+  machine: PublicMachine;
+};
+
 export default function Home() {
   const [duration, setDuration] = useState("60");
   const [sshKey, setSshKey] = useState("");
@@ -35,13 +48,13 @@ export default function Home() {
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
 
-  async function createMachine(event: FormEvent<HTMLFormElement>) {
+  async function checkoutMachine(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
     setMessage("");
 
     try {
-      const response = await fetch("/api/machines", {
+      const response = await fetch("/api/checkout", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -49,17 +62,22 @@ export default function Home() {
           ssh_public_key: sshKey,
         }),
       });
-      const payload = await response.json();
+      const payload = await readJson(response);
       if (!response.ok) {
-        setMessage(payload.error ?? "Request failed.");
+        setMessage(
+          response.status === 402
+            ? "Payment required. Retry this checkout request with an MPP payment credential."
+            : errorMessage(payload, "Checkout failed."),
+        );
         return;
       }
-      setMachine(payload);
-      setMachineId(payload.machine_id);
-      if (payload.management) {
-        setReadToken(payload.management.read_token);
-        setExtendToken(payload.management.extend_token);
-        setTerminateToken(payload.management.terminate_token);
+      const checkout = payload as CheckoutResponse;
+      setMachine(checkout.machine);
+      setMachineId(checkout.machine.machine_id);
+      if (checkout.machine.management) {
+        setReadToken(checkout.machine.management.read_token);
+        setExtendToken(checkout.machine.management.extend_token);
+        setTerminateToken(checkout.machine.management.terminate_token);
       }
     } finally {
       setBusy(false);
@@ -141,10 +159,10 @@ export default function Home() {
       <section className="workbench">
         <div className="intro">
           <p className="eyebrow">Compute Storefront</p>
-          <h1>Bare Linux Machine</h1>
+          <h1>Bare Linux Machine Checkout</h1>
         </div>
 
-        <form className="machine-form" onSubmit={createMachine}>
+        <form className="machine-form" onSubmit={checkoutMachine}>
           <label>
             <span>Duration</span>
             <div className="duration-row">
@@ -172,7 +190,7 @@ export default function Home() {
 
           <div className="actions">
             <button disabled={busy} type="submit">
-              Create Machine
+              Start MPP Checkout
             </button>
             <button disabled={busy || !machineId} onClick={() => refreshMachine()} type="button" className="secondary">
               Refresh
@@ -276,6 +294,18 @@ export default function Home() {
 
 function bearerHeaders(token: string): HeadersInit {
   return token ? { authorization: `Bearer ${token}` } : {};
+}
+
+function errorMessage(payload: Record<string, unknown>, fallback: string): string {
+  return typeof payload.error === "string" ? payload.error : fallback;
+}
+
+async function readJson(response: Response): Promise<Record<string, unknown>> {
+  try {
+    return (await response.json()) as Record<string, unknown>;
+  } catch {
+    return {};
+  }
 }
 
 function formatDate(value: string): string {

@@ -13,7 +13,7 @@ export function agentStorefrontManifest() {
     auth: {
       type: "lease_capability_tokens",
       summary:
-        "Create requires no account. Management actions require the per-resource capability token returned at creation.",
+        "Paid checkout uses MPP. Management actions require the per-resource capability token returned after paid checkout.",
       token_handling: [
         "Treat read_token, extend_token, and terminate_token as secrets.",
         "Do not print tokens in logs or user-visible output unless explicitly required.",
@@ -51,11 +51,27 @@ export function agentStorefrontManifest() {
         },
       },
     ],
+    payments: {
+      protocol: "mpp",
+      checkout_path: "/api/checkout",
+      challenge_status: 402,
+      methods: ["stripe-spt", "tempo-usdc"],
+      pricing: {
+        currency: "usd",
+        unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
+      },
+    },
     endpoints: {
-      create: {
+      checkout: {
+        method: "POST",
+        path: "/api/checkout",
+        auth: "MPP payment",
+      },
+      create_dev: {
         method: "POST",
         path: "/api/machines",
         auth: "none",
+        summary: "Unpaid local/dev provisioning path. Use checkout for paid agent purchases.",
       },
       read: {
         method: "GET",
@@ -96,11 +112,17 @@ Primary product:
 - SSH username: ${product.username}
 
 Create a machine:
-POST /api/machines
+POST /api/checkout
 Content-Type: application/json
 JSON: { "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
 
-The create response includes resource-scoped management tokens:
+If payment is required, the service responds with HTTP 402 and MPP payment challenges.
+Retry the same request with an MPP payment credential. After successful payment, the response includes:
+- checkout.status = paid
+- checkout.quote
+- machine
+
+The machine object includes resource-scoped management tokens:
 - read_token for GET /api/machines/{machine_id}
 - extend_token for POST /api/machines/{machine_id}/extend
 - terminate_token for DELETE /api/machines/{machine_id}
@@ -121,6 +143,7 @@ Authorization: Bearer <terminate_token>
 
 Important:
 - Treat all management tokens as secrets.
+- Use /api/checkout, not /api/machines, for paid agent purchases.
 - Do not expose tokens in logs or chat unless explicitly required.
 - Poll until status is active before trying to SSH.
 - Terminate the machine when finished.
@@ -177,6 +200,42 @@ export function openApiDocument() {
               },
             },
             "400": { $ref: "#/components/responses/Error" },
+          },
+        },
+      },
+      "/api/checkout": {
+        post: {
+          operationId: "checkoutMachine",
+          summary: "Create a temporary bare Linux machine after MPP payment.",
+          description:
+            "Submit the desired lease. If no valid MPP credential is present, the response is HTTP 402 with MPP payment challenges. Retry the same request with an MPP payment credential to provision the machine.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CreateMachineRequest" },
+              },
+            },
+          },
+          responses: {
+            "202": {
+              description: "Paid checkout accepted. The response includes the quote and machine management tokens.",
+              headers: {
+                "Payment-Receipt": {
+                  description: "MPP payment receipt.",
+                  schema: { type: "string" },
+                },
+              },
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/CheckoutMachineResponse" },
+                },
+              },
+            },
+            "400": { $ref: "#/components/responses/Error" },
+            "402": {
+              description: "MPP payment required. Inspect WWW-Authenticate headers for payment challenges.",
+            },
           },
         },
       },
@@ -343,6 +402,44 @@ export function openApiDocument() {
             },
           ],
         },
+        CheckoutMachineResponse: {
+          type: "object",
+          required: ["checkout", "machine"],
+          properties: {
+            checkout: {
+              type: "object",
+              required: ["status", "quote"],
+              properties: {
+                status: { type: "string", const: "paid" },
+                quote: { $ref: "#/components/schemas/CheckoutQuote" },
+              },
+            },
+            machine: { $ref: "#/components/schemas/MachineWithManagement" },
+          },
+        },
+        CheckoutQuote: {
+          type: "object",
+          required: [
+            "product_id",
+            "duration_minutes",
+            "unit_price_cents_per_minute",
+            "amount_cents",
+            "amount",
+            "currency",
+          ],
+          properties: {
+            product_id: { type: "string", const: product.id },
+            duration_minutes: {
+              type: "integer",
+              minimum: product.minDurationMinutes,
+              maximum: product.maxDurationMinutes,
+            },
+            unit_price_cents_per_minute: { type: "integer", minimum: 1 },
+            amount_cents: { type: "integer", minimum: 1 },
+            amount: { type: "string", pattern: "^\\d+\\.\\d{2}$" },
+            currency: { type: "string", const: "usd" },
+          },
+        },
         ManagementTokens: {
           type: "object",
           required: ["read_token", "extend_token", "terminate_token"],
@@ -363,4 +460,3 @@ export function openApiDocument() {
     },
   };
 }
-
