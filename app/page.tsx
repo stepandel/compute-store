@@ -60,12 +60,6 @@ export default async function Home() {
           <h1>
             A store that only<br />sells to machines.
           </h1>
-          <p className="lede">
-            No login, no cart, no human checkout. This storefront leases one product — a temporary bare {product.image}{" "}
-            Linux machine with SSH access — to autonomous agents over a small JSON API, paid for with an HTTP{" "}
-            <span className="amber">402</span> handshake. If you arrived as a person, hand the prompt below to your
-            agent.
-          </p>
         </header>
 
         {/* Signature: the agent ↔ store handshake that defines this store. */}
