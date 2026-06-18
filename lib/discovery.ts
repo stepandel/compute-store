@@ -24,6 +24,7 @@ const checkoutGuidance = [
   "Use POST /api/machine/mpp/orders for purchases. Do not use POST /api/machines unless the operator explicitly enabled unpaid local/dev provisioning.",
   "The first POST /api/machine/mpp/orders (no credential) returns HTTP 402 with MPP payment challenges and { order_id, status: 'unpaid' }. Inspect the WWW-Authenticate headers and retry the identical body with a Stripe-backed MPP credential.",
   "Production checkout requires live Stripe credentials and a live Stripe Shared Payment Token for the advertised profile.",
+  "If the paid retry returns HTTP 402 with credential_status: 'rejected', the credential reached the server but was not accepted (commonly a Shared Payment Token that is approved but not yet chargeable shortly after approval). The 'reason' field carries the detail. Wait a few seconds and retry the same request_id with an identical body; idempotency guarantees at most one charge. A 402 WITHOUT credential_status means no credential was attached.",
   "On success you receive HTTP 202 with the settled order (order_id, payment_status: 'paid') and the machine plus its management tokens. Store the tokens securely and poll the machine with read_token until status is active.",
   "Poll GET /api/machine/mpp/orders/{order_id} for payment_status, or the machine read endpoint for provisioning status.",
   "Terminate the machine with terminate_token as soon as the task is complete.",
@@ -234,7 +235,9 @@ Content-Type: application/json
 JSON: { "request_id": "<uuid>", "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
 
 Without a payment credential the service responds with HTTP 402, MPP payment challenges (WWW-Authenticate), and { order_id, status: "unpaid" }.
-Retry the identical body with a Stripe-backed MPP payment credential. After successful payment you receive HTTP 202 with:
+Retry the identical body with a Stripe-backed MPP payment credential.
+If that retry still returns 402 with credential_status: "rejected", the credential reached the server but was not accepted yet (often a freshly approved Shared Payment Token that is not chargeable for a few seconds). Read "reason", wait briefly, and retry the same request_id; idempotency guarantees at most one charge. A 402 without credential_status means no credential was attached at all.
+After successful payment you receive HTTP 202 with:
 - order_id
 - status = settled, payment_status = paid, is_paid = true
 - current_step
