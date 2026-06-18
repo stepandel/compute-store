@@ -58,11 +58,11 @@ export function checkoutComposeEntries(checkout: MppCheckout, quote: CheckoutQuo
     [
       "stripe/charge",
       {
-        // MPP/Stripe SPT amounts are integer minor units (cents), matching
-        // Stripe's PaymentIntent amount. quote.amount ("3.99") is a display
-        // string; advertising it makes the client's SPT spend-request creation
-        // fail because it isn't a valid minor-unit amount.
-        amount: String(quote.amount_cents),
+        // The stripe/charge request schema expects a decimal/major-unit amount
+        // string (e.g. "3.99") and converts to minor units itself via
+        // parseUnits(amount, decimals). Passing cents here double-converts
+        // (parseUnits("399", 2) = 39900 = $399.00).
+        amount: quote.amount,
         description: `${quote.duration_minutes} minute ${quote.product_id} lease`,
         expires: checkoutChallengeExpires(),
         meta: checkoutMetadata(quote),
