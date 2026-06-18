@@ -27,7 +27,9 @@ export async function POST(request: Request) {
     const quote = quoteCheckout(createRequest);
 
     const checkout = createMppCheckout();
-    const payment = await checkout.payment.compose(...checkoutComposeEntries(checkout, quote))(request);
+    const payment = await checkout.payment.compose(
+      ...checkoutComposeEntries(checkout, quote, createRequest),
+    )(request);
 
     // Only provision when MPP explicitly confirms a settled payment (status
     // 200). Any other outcome (402 challenge, or an unexpected status) must
@@ -48,6 +50,7 @@ export async function POST(request: Request) {
             status: "paid",
             mode: "mpp",
             quote,
+            ...(createRequest.requestId !== undefined ? { request_id: createRequest.requestId } : {}),
           },
           machine: toPublicMachine(created.lease, created.management),
         },

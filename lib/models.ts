@@ -4,6 +4,10 @@ export type CapabilityAction = "read" | "extend" | "terminate";
 export type CreateMachineRequest = {
   durationMinutes: number;
   sshPublicKey: string;
+  // Optional client-supplied correlation id. Reused verbatim across the
+  // validate → 402 challenge → paid retry calls so the same logical order
+  // resolves to the same payment challenge. Not required for payment.
+  requestId?: string;
 };
 
 export type ProvisionedMachine = {

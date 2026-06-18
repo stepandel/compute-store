@@ -8,6 +8,12 @@ const SSH_PUBLIC_KEY_RE =
 // headroom while preventing oversized keys from bloating the lease store.
 const MAX_SSH_PUBLIC_KEY_LENGTH = 8 * 1024;
 
+// request_id is an opaque correlation token; keep it to a conservative
+// id-shaped charset and length so it can be safely echoed into payment
+// challenge metadata without bloating the WWW-Authenticate header.
+const REQUEST_ID_RE = /^[A-Za-z0-9_.:-]+$/;
+const MAX_REQUEST_ID_LENGTH = 200;
+
 export class ValidationError extends Error {}
 
 export function parseCreateMachineRequest(payload: unknown, product: Product): CreateMachineRequest {
@@ -18,6 +24,7 @@ export function parseCreateMachineRequest(payload: unknown, product: Product): C
   const body = payload as Record<string, unknown>;
   const duration = body.duration_minutes;
   const sshPublicKey = body.ssh_public_key;
+  const requestId = parseOptionalRequestId(body.request_id);
 
   if (typeof duration !== "number" || !Number.isInteger(duration)) {
     throw new ValidationError("duration_minutes must be an integer.");
@@ -41,7 +48,28 @@ export function parseCreateMachineRequest(payload: unknown, product: Product): C
   return {
     durationMinutes: duration,
     sshPublicKey: sshPublicKey.trim(),
+    ...(requestId !== undefined ? { requestId } : {}),
   };
+}
+
+function parseOptionalRequestId(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+  if (typeof value !== "string") {
+    throw new ValidationError("request_id must be a string.");
+  }
+  const trimmed = value.trim();
+  if (trimmed.length === 0) {
+    return undefined;
+  }
+  if (trimmed.length > MAX_REQUEST_ID_LENGTH) {
+    throw new ValidationError(`request_id must be at most ${MAX_REQUEST_ID_LENGTH} characters.`);
+  }
+  if (!REQUEST_ID_RE.test(trimmed)) {
+    throw new ValidationError("request_id may only contain letters, digits, and the characters _.:-");
+  }
+  return trimmed;
 }
 
 export function parseExtendMachineRequest(payload: unknown): number {

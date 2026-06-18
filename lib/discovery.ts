@@ -19,8 +19,9 @@ function resolveServiceUrl(request?: Request): string {
 }
 
 const checkoutGuidance = [
+  "Optional preflight: POST /api/checkout/validate with the same body to confirm the order and read the quote and payment methods before paying. No payment is composed and no machine is created.",
   "Use POST /api/checkout for purchases. Do not use POST /api/machines unless the operator explicitly enabled unpaid local/dev provisioning.",
-  "Submit duration_minutes and ssh_public_key as JSON.",
+  "Submit duration_minutes and ssh_public_key as JSON. Optionally include a request_id and reuse it (with an otherwise identical body) across validate and checkout so the same order resolves to the same payment challenge.",
   "If the service returns HTTP 402, inspect the MPP payment challenges and retry the same request with a Stripe-backed MPP credential.",
   "Production checkout requires live Stripe credentials and a live Stripe Shared Payment Token for the advertised profile.",
   "After paid checkout succeeds, store the returned management tokens securely and poll the machine with read_token until status is active.",
@@ -123,6 +124,7 @@ export function agentStorefrontManifest(request?: Request) {
     payments: {
       protocol: "mpp",
       processor: "stripe",
+      validate_path: "/api/checkout/validate",
       checkout_path: "/api/checkout",
       challenge_status: 402,
       methods: ["stripe-spt"],
@@ -142,6 +144,12 @@ export function agentStorefrontManifest(request?: Request) {
         "Machines may be terminated, access may be revoked, and future checkouts may be refused for abuse, suspected abuse, provider complaints, sanctions risk, payment risk, or policy violations.",
     },
     endpoints: {
+      validate: {
+        method: "POST",
+        path: "/api/checkout/validate",
+        auth: "none",
+        summary: "Preflight: validate the order and return the quote and payment methods. No payment, no machine created.",
+      },
       checkout: {
         method: "POST",
         path: "/api/checkout",
@@ -200,6 +208,12 @@ Primary product:
 Pricing:
 - base fee: $${formatCents(Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99))}
 - minute rate: $${formatCents(Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5))}/minute
+
+Optional preflight (recommended):
+POST /api/checkout/validate
+Content-Type: application/json
+JSON: { "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
+Returns { protocol, valid, methods, quote } with no payment and no machine created. Reuse the same body on checkout.
 
 Create a machine:
 POST /api/checkout
@@ -310,6 +324,33 @@ export function openApiDocument(request?: Request) {
               content: {
                 "application/json": {
                   schema: { $ref: "#/components/schemas/MachineWithManagement" },
+                },
+              },
+            },
+            "400": { $ref: "#/components/responses/Error" },
+          },
+        },
+      },
+      "/api/checkout/validate": {
+        post: {
+          operationId: "validateCheckout",
+          summary: "Preflight validate an order and return its quote and payment methods.",
+          description:
+            "Submit the desired lease to confirm it is valid and to read the final quote and accepted payment methods. No payment is composed and no machine is created. Reuse the same body (notably request_id) on POST /api/checkout.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CreateMachineRequest" },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description: "The order is valid. Returns the protocol, accepted payment methods, and quote.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/ValidateCheckoutResponse" },
                 },
               },
             },
@@ -471,6 +512,13 @@ export function openApiDocument(request?: Request) {
               type: "string",
               description: "SSH public key to install on the leased machine.",
             },
+            request_id: {
+              type: "string",
+              description:
+                "Optional client correlation id. Reuse the same value across validate and checkout (with an otherwise identical body) so the same order resolves to the same payment challenge. Not required for payment.",
+              maxLength: 200,
+              pattern: "^[A-Za-z0-9_.:-]+$",
+            },
           },
         },
         ExtendMachineRequest: {
@@ -555,6 +603,29 @@ export function openApiDocument(request?: Request) {
             amount_cents: { type: "integer", minimum: 1 },
             amount: { type: "string", pattern: "^\\d+\\.\\d{2}$" },
             currency: { type: "string", const: "usd" },
+          },
+        },
+        ValidateCheckoutResponse: {
+          type: "object",
+          required: ["protocol", "valid", "methods", "quote", "checkout_path"],
+          properties: {
+            protocol: { type: "string", const: "mpp" },
+            valid: { type: "boolean", const: true },
+            methods: {
+              type: "array",
+              items: {
+                type: "object",
+                required: ["id", "processor", "payment_method_types"],
+                properties: {
+                  id: { type: "string", const: "stripe-spt" },
+                  processor: { type: "string", const: "stripe" },
+                  payment_method_types: { type: "array", items: { type: "string" } },
+                },
+              },
+            },
+            quote: { $ref: "#/components/schemas/CheckoutQuote" },
+            checkout_path: { type: "string", const: "/api/checkout" },
+            request_id: { type: "string" },
           },
         },
         ManagementTokens: {
