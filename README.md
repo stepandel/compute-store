@@ -175,7 +175,7 @@ Without an MPP credential, the response is `402 Payment Required` with `WWW-Auth
 }
 ```
 
-The unpaid local/dev provisioning endpoint remains available only when `PROVIDER=dry-run` or `ALLOW_UNPAID_MACHINE_CREATE=true`:
+The unpaid local/dev provisioning endpoint is disabled by default, including in dry-run mode. It is available only when `ALLOW_UNPAID_MACHINE_CREATE=true`:
 
 ```bash
 curl -s http://localhost:3000/api/machines \

@@ -78,7 +78,7 @@ export function loadSettings(): Settings {
     redisRestKey: process.env.REDIS_REST_KEY ?? "checkout-proto:leases",
     provider,
     hetznerApiToken: process.env.HETZNER_API_TOKEN,
-    allowUnpaidMachineCreate: process.env.ALLOW_UNPAID_MACHINE_CREATE === "true" || provider === "dry-run",
+    allowUnpaidMachineCreate: process.env.ALLOW_UNPAID_MACHINE_CREATE === "true",
     allowTestPaymentsWithRealProvider: process.env.ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER === "true",
     product,
     checkout: {

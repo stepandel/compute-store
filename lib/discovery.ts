@@ -17,7 +17,7 @@ function resolveServiceUrl(): string {
 const acceptableUseUrl = new URL(acceptableUsePath, serviceUrl).toString();
 
 const checkoutGuidance = [
-  "Use POST /api/checkout for paid purchases. Do not use POST /api/machines except in local/dev flows.",
+  "Use POST /api/checkout for purchases. Do not use POST /api/machines unless the operator explicitly enabled unpaid local/dev provisioning.",
   "Submit duration_minutes and ssh_public_key as JSON.",
   "If the service returns HTTP 402, inspect the MPP payment challenges and retry the same request with a Stripe-backed MPP credential.",
   "For Stripe sandbox validation, use the same MPP flow with Stripe Link CLI test mode: create the shared_payment_token spend request with --test when the challenge network_id is a profile_test_... value.",
@@ -173,7 +173,7 @@ export function agentStorefrontManifest() {
         method: "POST",
         path: "/api/machines",
         auth: "none",
-        summary: "Unpaid local/dev provisioning path. Use checkout for paid agent purchases.",
+        summary: "Explicitly opt-in unpaid local/dev provisioning path. Use checkout for all purchases.",
       },
       read: {
         method: "GET",
@@ -272,8 +272,8 @@ ${prohibitedUses.map((item) => `- Do not use machines for: ${item}`).join("\n")}
 
 Important:
 - Treat all management tokens as secrets.
-- Use /api/checkout, not /api/machines, for paid agent purchases.
-- Do not use the unpaid dev endpoint in production purchase flows.
+- Use /api/checkout, not /api/machines, for agent purchases.
+- Do not use the unpaid dev endpoint unless the operator explicitly enabled it for local testing.
 - Do not retry failed payments blindly.
 - Do not expose tokens in logs or chat unless explicitly required.
 - Poll until status is active before trying to SSH.

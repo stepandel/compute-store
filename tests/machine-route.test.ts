@@ -3,10 +3,10 @@ import assert from "node:assert/strict";
 import { POST } from "@/app/api/machines/route";
 
 describe("machine create route", () => {
-  it("rejects unpaid creates when the provider is not dry-run", async () => {
+  it("rejects unpaid creates unless explicitly enabled", async () => {
     const originalProvider = process.env.PROVIDER;
     const originalAllow = process.env.ALLOW_UNPAID_MACHINE_CREATE;
-    process.env.PROVIDER = "hetzner";
+    process.env.PROVIDER = "dry-run";
     delete process.env.ALLOW_UNPAID_MACHINE_CREATE;
 
     try {
