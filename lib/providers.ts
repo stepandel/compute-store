@@ -37,14 +37,16 @@ export class HetznerProvider implements ComputeProvider {
     let serverId: string | null = null;
 
     try {
+      const resourceName = hetznerResourceName(lease.id);
+
       const sshKey = await this.request<{ ssh_key: { id: number } }>("POST", "/ssh_keys", {
-        name: `storefront-${lease.id}`,
+        name: `storefront-${resourceName}`,
         public_key: lease.sshPublicKey,
       });
       sshKeyId = String(sshKey.ssh_key.id);
 
       const firewall = await this.request<{ firewall: { id: number } }>("POST", "/firewalls", {
-        name: `lease-${lease.id}-ssh-only`,
+        name: `lease-${resourceName}-ssh-only`,
         rules: [
           {
             direction: "in",
@@ -60,7 +62,7 @@ export class HetznerProvider implements ComputeProvider {
       const server = await this.request<{
         server: { id: number; public_net?: { ipv4?: { ip?: string } } };
       }>("POST", "/servers", {
-        name: `lease-${lease.id}`,
+        name: `lease-${resourceName}`,
         server_type: this.product.serverType,
         image: this.product.image,
         location: this.product.location,
@@ -189,4 +191,8 @@ function leaseLabels(lease: MachineLease): Record<string, string> {
     lease_id: lease.id,
     product: lease.productId,
   };
+}
+
+function hetznerResourceName(id: string): string {
+  return id.replaceAll("_", "-").toLowerCase();
 }
