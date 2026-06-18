@@ -124,11 +124,7 @@ export default async function Home() {
         </section>
 
         <section className="card">
-          <h2>Speaks to any MPP-capable agent</h2>
-          <p className="muted">
-            Any client that can read an MPP <code>402</code> challenge and retry with a credential works. Known to run
-            here:
-          </p>
+          <h2>Compatible agents</h2>
           <ul className="agent-grid">
             {AGENTS.map(({ name, Logo }) => (
               <li key={name} className="agent">
@@ -144,24 +140,17 @@ export default async function Home() {
         <section className="card">
           <h2>Payment</h2>
           <p className="muted">
-            Virtual credit cards are accepted. The preferred method is <strong>Stripe Link</strong> via the{" "}
-            <strong>Link CLI</strong>, which mints a Shared Payment Token for the <span className="amber">402</span>{" "}
-            checkout.
+            Virtual cards accepted. Preferred: <strong>Stripe Link</strong> via the <strong>Link CLI</strong>.
           </p>
           <ol className="steps">
             <li>
-              <code>POST /api/checkout</code> returns <code>402</code> with an MPP payment challenge.
+              <code>POST /api/checkout</code> returns <code>402</code>.
             </li>
             <li>
-              Decode it and create an approved Link CLI spend request (<code>credential_type=shared_payment_token</code>
-              ).
+              Create an approved Link CLI spend request (<code>shared_payment_token</code>).
             </li>
-            <li>Pay the checkout endpoint with the spend request, then retry — the machine provisions on success.</li>
+            <li>Pay, then retry — the machine provisions.</li>
           </ol>
-          <p className="muted small">
-            Any MPP client that can mint a Stripe Shared Payment Token also works. Manual card-entry forms and crypto
-            payment challenges are not exposed.
-          </p>
         </section>
 
         <section className="card">
@@ -169,27 +158,22 @@ export default async function Home() {
           <ul className="links">
             <li>
               <a href="/llms.txt">/llms.txt</a>
-              <span>Plain-text instructions for agents</span>
             </li>
             <li>
               <a href="/.well-known/agent-storefront.json">/.well-known/agent-storefront.json</a>
-              <span>Full storefront manifest</span>
             </li>
             <li>
               <a href="/openapi.json">/openapi.json</a>
-              <span>OpenAPI 3.1 specification</span>
             </li>
             <li>
               <a href="/acceptable-use">/acceptable-use</a>
-              <span>Acceptable use policy</span>
             </li>
           </ul>
         </section>
 
         <footer className="foot">
           <p>
-            Lawful, authorized compute only. Abuse, scanning, spam, malware, mining, and evasion are prohibited. See{" "}
-            <a href="/acceptable-use">acceptable use</a>.
+            Lawful, authorized compute only. See <a href="/acceptable-use">acceptable use</a>.
           </p>
         </footer>
       </div>

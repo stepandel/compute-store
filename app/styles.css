@@ -257,11 +257,6 @@ h1 {
   line-height: 1.58;
 }
 
-.card .muted.small {
-  margin-top: 14px;
-  font-size: 13px;
-}
-
 .card code {
   padding: 1px 6px;
   border-radius: 5px;
@@ -407,11 +402,6 @@ h1 {
 .links li a {
   font-family: var(--mono);
   font-size: 14px;
-}
-
-.links li span {
-  color: var(--muted);
-  font-size: 13px;
 }
 
 /* ---- Footer ---- */
