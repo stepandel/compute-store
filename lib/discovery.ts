@@ -22,8 +22,7 @@ const checkoutGuidance = [
   "Use POST /api/checkout for purchases. Do not use POST /api/machines unless the operator explicitly enabled unpaid local/dev provisioning.",
   "Submit duration_minutes and ssh_public_key as JSON.",
   "If the service returns HTTP 402, inspect the MPP payment challenges and retry the same request with a Stripe-backed MPP credential.",
-  "For Stripe sandbox validation, use the same MPP flow with Stripe Link CLI test mode: create the shared_payment_token spend request with --test when the challenge network_id is a profile_test_... value.",
-  "If Link CLI cannot attach a shared_payment_token for a profile_test_... challenge, use POST /api/checkout/sandbox with the same JSON body. This operator-sponsored sandbox endpoint mints the Stripe test SPT server-side and never exposes the seller test key.",
+  "Production checkout requires live Stripe credentials and a live Stripe Shared Payment Token for the advertised profile.",
   "After paid checkout succeeds, store the returned management tokens securely and poll the machine with read_token until status is active.",
   "Terminate the machine with terminate_token as soon as the task is complete.",
 ];
@@ -42,48 +41,13 @@ const paymentClientGuidance = {
       "npx @stripe/link-cli mpp pay {service_url}/api/checkout --spend-request-id <approved_spend_request_id> --method POST --header 'Content-Type: application/json' --data '{\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
     ],
   },
-  sandbox_testing: {
-    id: "stripe-link-cli-test-spt",
-    summary:
-      "Use the same MPP checkout path with Stripe test-mode credentials. If the decoded challenge network_id starts with profile_test_, create the shared_payment_token spend request with --test so Link CLI provisions a test SPT instead of a real payment credential.",
-    command_note:
-      "Add --test to the spend-request create command when paying a profile_test_... sandbox challenge.",
-    real_provider_note:
-      "Stripe test-mode payments are accepted only for dry-run provisioning by default. Real providers such as Hetzner require live payments unless the operator explicitly enables ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER for a controlled infrastructure test.",
-    fallback_note:
-      "Some Stripe sandbox accounts cannot grant network-scoped Shared Payment Tokens (the SPT grant rejects seller_details[network_id] with 'Received unknown parameter'). When that happens, Link CLI reports the spend request as approved but never attaches a shared_payment_token, so `mpp pay` fails locally with 'Spend request does not have a shared payment token'. Do not retry Link CLI in that case — use the operator-sponsored sandbox checkout endpoint first (id: operator-sponsored-sandbox-checkout). If you are the operator and have the seller test secret locally, the mppx CLI fallback below is also supported.",
-  },
   also_supported: [
-    {
-      id: "operator-sponsored-sandbox-checkout",
-      name: "Operator-sponsored sandbox checkout",
-      summary:
-        "Public sandbox-only fallback for agents that can access only this live site. POST the same checkout JSON to /api/checkout/sandbox. The server mints a Stripe test SPT using its own test secret key, verifies payment through the normal MPP path, and provisions the machine. No Stripe secret is exposed to the agent and no real card is charged.",
-      credential_type: "server_minted_test_shared_payment_token",
-      applies_when:
-        "Sandbox challenges (network_id starts with profile_test_) AND Link CLI never mints a shared_payment_token.",
-      command_sequence: [
-        "curl -s {service_url}/api/checkout/sandbox -H 'content-type: application/json' -d '{\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
-      ],
-    },
     {
       id: "generic-mpp-stripe-spt-client",
       name: "Generic MPP client with Stripe SPT support",
       summary:
         "Any client that can read the Payment WWW-Authenticate challenge, create a Stripe Shared Payment Token for the advertised network/profile, and retry with Authorization: Payment is supported.",
       credential_type: "shared_payment_token",
-    },
-    {
-      id: "mppx-cli-account-scoped-test-spt",
-      name: "mppx CLI (sandbox account-scoped test SPT)",
-      summary:
-        "Sandbox-only fallback for when the seller's Stripe account cannot grant network-scoped SPTs (see payment_client_guidance.sandbox_testing.fallback_note). The mppx CLI provisions an account-scoped test SPT via POST /v1/test_helpers/shared_payment/granted_tokens (using a Stripe test secret key for the seller profile's account; in this self-contained sandbox that is the storefront's own STRIPE_SECRET_KEY) and retries the same 402 checkout with Authorization: Payment. Charges a Stripe test PaymentIntent only — no real money.",
-      credential_type: "shared_payment_token",
-      applies_when:
-        "Sandbox challenges (network_id starts with profile_test_) AND Link CLI never mints a shared_payment_token.",
-      command_sequence: [
-        "MPPX_STRIPE_SECRET_KEY=sk_test_... npx mppx {service_url}/api/checkout -X POST -J '{\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}' -M paymentMethod=pm_card_visa",
-      ],
     },
   ],
   unsupported: [
@@ -167,11 +131,7 @@ export function agentStorefrontManifest(request?: Request) {
         base_fee_cents: Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99),
         unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
       },
-      sandbox_testing: {
-        mode: "stripe_link_cli_test_spt",
-        summary:
-          "Sandbox uses the normal MPP 402 flow with dry-run provisioning by default. Use STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and Link CLI spend-request create --test for test SPTs.",
-      },
+      environment: "production",
     },
     payment_client_guidance: paymentClientGuidance,
     checkout_guidance: checkoutGuidance,
@@ -186,13 +146,6 @@ export function agentStorefrontManifest(request?: Request) {
         method: "POST",
         path: "/api/checkout",
         auth: "MPP payment",
-      },
-      sandbox_checkout: {
-        method: "POST",
-        path: "/api/checkout/sandbox",
-        auth: "none",
-        summary:
-          "Sandbox-only operator-sponsored checkout. Uses the same request body as /api/checkout and returns the same machine management tokens after server-side test SPT verification.",
       },
       create_dev: {
         method: "POST",
@@ -220,7 +173,7 @@ export function agentStorefrontManifest(request?: Request) {
       "Create a machine only when a temporary Linux host is required.",
       "Use only for lawful, authorized activity that complies with the acceptable use policy.",
       "Poll with the read token until status is active before using SSH.",
-      "Do not expect Stripe sandbox payments to create real-provider resources unless the operator explicitly opted into that infrastructure test.",
+      "Use a live Stripe payment credential for checkout; sandbox payments are not accepted.",
       "Use the extend token only if more time is required and the lease is still useful.",
       "Use the terminate token as soon as the machine is no longer needed.",
       "If a request fails with 401 or 403, do not retry blindly; verify the correct capability token is being used.",
@@ -270,13 +223,7 @@ Payment client guidance:
 - Decode the payment challenge first: ${paymentClientGuidance.recommended.command_sequence[0]}
 - Create the SPT spend request: ${paymentClientGuidance.recommended.command_sequence[2]}
 - Pay the checkout endpoint: ${paymentClientGuidance.recommended.command_sequence[3].replace("{service_url}", serviceUrl)}
-- Sandbox test path: use the same MPP flow with STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and add --test to the Link CLI spend-request create command when the decoded network_id starts with profile_test_...
-- Sandbox payments create dry-run machines by default. Real providers such as Hetzner require live payments unless the operator explicitly enables ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER for a controlled infrastructure test.
-- Sandbox fallback (account-scoped test SPT): some Stripe sandbox accounts cannot grant network-scoped SPTs (the grant rejects seller_details[network_id] with "Received unknown parameter"). Symptom: Link CLI marks the spend request approved but never attaches a shared_payment_token, so "mpp pay" fails locally with "Spend request does not have a shared payment token". Do not retry Link CLI. Instead pay with the mppx CLI, which mints an account-scoped test SPT via POST /v1/test_helpers/shared_payment/granted_tokens and retries with Authorization: Payment:
-- Public sandbox fallback for agents without the seller test secret: POST the same JSON body to ${serviceUrl}/api/checkout/sandbox. This operator-sponsored endpoint mints the Stripe test SPT server-side, verifies it through the same MPP path, and returns the normal machine management tokens. No Stripe secret is exposed and no real card is charged.
-- Operator-local sandbox fallback (account-scoped test SPT): some Stripe sandbox accounts cannot grant network-scoped SPTs (the grant rejects seller_details[network_id] with "Received unknown parameter"). Symptom: Link CLI marks the spend request approved but never attaches a shared_payment_token, so "mpp pay" fails locally with "Spend request does not have a shared payment token". Do not retry Link CLI. If you are the operator and have the seller test secret locally, pay with the mppx CLI, which mints an account-scoped test SPT via POST /v1/test_helpers/shared_payment/granted_tokens and retries with Authorization: Payment:
-    MPPX_STRIPE_SECRET_KEY=sk_test_... npx mppx ${serviceUrl}/api/checkout -X POST -J '{"duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}' -M paymentMethod=pm_card_visa
-  (Use a Stripe test secret key for the seller profile's account; in this self-contained sandbox that is the storefront's own STRIPE_SECRET_KEY. Test mode only — charges a Stripe test PaymentIntent, no real money.)
+- Use a live Stripe SPT. Test-mode Stripe credentials and sandbox payment tokens are not accepted.
 - Also supported: any MPP client that can create a Stripe Shared Payment Token for the advertised challenge and retry with Authorization: Payment.
 - Do not use Link CLI virtual cards; this API does not expose a standard card checkout form.
 - Do not use manual card entry or crypto payment clients; they are not accepted by this storefront.
@@ -403,41 +350,6 @@ export function openApiDocument(request?: Request) {
             "402": {
               description: "MPP payment required. Inspect WWW-Authenticate headers for payment challenges.",
             },
-          },
-        },
-      },
-      "/api/checkout/sandbox": {
-        post: {
-          operationId: "sandboxCheckoutMachine",
-          summary: "Create a temporary bare Linux machine with operator-sponsored Stripe sandbox payment.",
-          description:
-            "Sandbox-only fallback for agents that cannot mint a Stripe test Shared Payment Token locally. Submit the same JSON body as /api/checkout. The server mints and verifies a Stripe test SPT through the normal MPP path, then provisions the machine.",
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: { $ref: "#/components/schemas/CreateMachineRequest" },
-              },
-            },
-          },
-          responses: {
-            "202": {
-              description:
-                "Operator-sponsored sandbox checkout accepted. The response includes the quote and machine management tokens.",
-              headers: {
-                "Payment-Receipt": {
-                  description: "MPP payment receipt.",
-                  schema: { type: "string" },
-                },
-              },
-              content: {
-                "application/json": {
-                  schema: { $ref: "#/components/schemas/CheckoutMachineResponse" },
-                },
-              },
-            },
-            "400": { $ref: "#/components/responses/Error" },
-            "503": { $ref: "#/components/responses/Error" },
           },
         },
       },

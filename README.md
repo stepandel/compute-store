@@ -29,11 +29,10 @@ DATA_PATH=data/machines.json
 LEASE_STORE=file
 PROVIDER=dry-run
 ALLOW_UNPAID_MACHINE_CREATE=false
-ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER=false
 CRON_SECRET=replace-with-random-secret
 MPP_SECRET_KEY=replace-with-random-base64-secret
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_PROFILE_ID=profile_test_...
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_PROFILE_ID=profile_...
 STRIPE_PAYMENT_METHOD_TYPES=card,link
 CHECKOUT_BASE_FEE_CENTS=99
 PRICE_CENTS_PER_MINUTE=5
@@ -56,9 +55,9 @@ Generate `MPP_SECRET_KEY` with:
 openssl rand -base64 32
 ```
 
-Paid checkout is exposed at `POST /api/checkout`. It follows the MPP pattern used by agentic checkout examples such as PostalForm and Prospect Butcher Co.: submit the order details, receive an HTTP `402` payment challenge if no credential is present, retry with a Stripe-backed MPP payment credential, and then receive the fulfilled resource.
+Paid checkout is exposed at `POST /api/checkout`. It follows the MPP pattern used by agentic checkout examples such as PostalForm and Prospect Butcher Co.: submit the order details, receive an HTTP `402` payment challenge if no credential is present, retry with a live Stripe-backed MPP payment credential, and then receive the fulfilled resource.
 
-For Stripe SPT/card-style MPP payments, create a Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_test_...` value in test mode or the `profile_...` value in live mode. Use a matching `STRIPE_SECRET_KEY`: `sk_test_...` for sandbox checkout, `sk_live_...` for real payments. The default accepted SPT-backed payment methods are `card,link`.
+For Stripe SPT/card-style MPP payments, create a live Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_...` value. Use a matching live `STRIPE_SECRET_KEY=sk_live_...`. Test-mode Stripe keys and sandbox payment tokens are rejected by production checkout. The default accepted SPT-backed payment methods are `card,link`.
 
 Recommended agent payment path is Stripe Link CLI using an MPP Shared Payment Token. Current Link CLI versions require the agent to decode the `402` challenge, create an approved spend request, then pay the endpoint:
 
@@ -85,22 +84,6 @@ npx @stripe/link-cli mpp pay http://localhost:3000/api/checkout \
   --header 'Content-Type: application/json' \
   --data '{"duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}'
 ```
-
-For Stripe sandbox testing, keep the same MPP flow and use matching test-mode Stripe settings:
-
-```bash
-PROVIDER=dry-run
-STRIPE_SECRET_KEY=sk_test_...
-STRIPE_PROFILE_ID=profile_test_...
-```
-
-By default, Stripe test-mode payments are blocked when `PROVIDER=hetzner` because they would create real billable servers without collecting real payment. For a tightly controlled infrastructure test only, explicitly set:
-
-```bash
-ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER=true
-```
-
-When the decoded challenge `network_id` starts with `profile_test_`, add `--test` to `npx @stripe/link-cli spend-request create`. This provisions a test Shared Payment Token while still exercising the same `402` and `Authorization: Payment` checkout path used in production.
 
 Any MPP client that can create a Stripe SPT for the advertised challenge and retry with `Authorization: Payment ...` should work. Link CLI virtual cards and manual card entry are not supported because this storefront exposes an agentic MPP endpoint, not a browser card checkout form. Crypto MPP is intentionally not accepted.
 
