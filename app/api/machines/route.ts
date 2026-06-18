@@ -5,6 +5,9 @@ import { toPublicMachine } from "@/lib/models";
 import { parseCreateMachineRequest, ValidationError } from "@/lib/validation";
 import { enforceRateLimit } from "@/lib/ratelimit";
 
+export const runtime = "nodejs";
+export const maxDuration = 180;
+
 export async function POST(request: Request) {
   try {
     const limited = await enforceRateLimit(request, "create");

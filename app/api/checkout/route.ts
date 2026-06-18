@@ -13,6 +13,7 @@ import { enforceRateLimit } from "@/lib/ratelimit";
 import { parseCreateMachineRequest, ValidationError } from "@/lib/validation";
 
 export const runtime = "nodejs";
+export const maxDuration = 180;
 
 export async function POST(request: Request) {
   try {
