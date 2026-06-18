@@ -11,6 +11,7 @@
     "test": "bun test tests/*.test.ts"
   },
   "dependencies": {
+    "@vercel/analytics": "^2.0.1",
     "mppx": "^0.7.0",
     "next": "^16.2.9",
     "react": "^19.2.7",
