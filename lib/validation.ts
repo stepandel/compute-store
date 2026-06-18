@@ -8,15 +8,26 @@ const SSH_PUBLIC_KEY_RE =
 // headroom while preventing oversized keys from bloating the lease store.
 const MAX_SSH_PUBLIC_KEY_LENGTH = 8 * 1024;
 
-// request_id is an opaque correlation token; keep it to a conservative
-// id-shaped charset and length so it can be safely echoed into payment
-// challenge metadata without bloating the WWW-Authenticate header.
+// request_id is the MPP idempotency key. PostalForm requires a UUID; the MPP
+// order endpoints enforce that (requireRequestId). The looser id-shaped charset
+// is accepted only on legacy/optional paths so the value can still be safely
+// echoed into payment challenge metadata without bloating headers.
 const REQUEST_ID_RE = /^[A-Za-z0-9_.:-]+$/;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_REQUEST_ID_LENGTH = 200;
+
+export type ParseCreateOptions = {
+  // When true, request_id is mandatory and must be a UUID (MPP order flow).
+  requireRequestId?: boolean;
+};
 
 export class ValidationError extends Error {}
 
-export function parseCreateMachineRequest(payload: unknown, product: Product): CreateMachineRequest {
+export function parseCreateMachineRequest(
+  payload: unknown,
+  product: Product,
+  options: ParseCreateOptions = {},
+): CreateMachineRequest {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
     throw new ValidationError("Request body must be a JSON object.");
   }
@@ -24,7 +35,7 @@ export function parseCreateMachineRequest(payload: unknown, product: Product): C
   const body = payload as Record<string, unknown>;
   const duration = body.duration_minutes;
   const sshPublicKey = body.ssh_public_key;
-  const requestId = parseOptionalRequestId(body.request_id);
+  const requestId = parseRequestId(body.request_id, options.requireRequestId ?? false);
 
   if (typeof duration !== "number" || !Number.isInteger(duration)) {
     throw new ValidationError("duration_minutes must be an integer.");
@@ -52,16 +63,22 @@ export function parseCreateMachineRequest(payload: unknown, product: Product): C
   };
 }
 
-function parseOptionalRequestId(value: unknown): string | undefined {
-  if (value === undefined || value === null) {
+function parseRequestId(value: unknown, required: boolean): string | undefined {
+  if (value === undefined || value === null || (typeof value === "string" && value.trim().length === 0)) {
+    if (required) {
+      throw new ValidationError("request_id is required and must be a UUID.");
+    }
     return undefined;
   }
   if (typeof value !== "string") {
     throw new ValidationError("request_id must be a string.");
   }
   const trimmed = value.trim();
-  if (trimmed.length === 0) {
-    return undefined;
+  if (required) {
+    if (!UUID_RE.test(trimmed)) {
+      throw new ValidationError("request_id must be a UUID.");
+    }
+    return trimmed;
   }
   if (trimmed.length > MAX_REQUEST_ID_LENGTH) {
     throw new ValidationError(`request_id must be at most ${MAX_REQUEST_ID_LENGTH} characters.`);

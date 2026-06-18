@@ -41,7 +41,7 @@ export class MachineService {
     private readonly providerName: ProviderName,
   ) {}
 
-  async createMachine(request: CreateMachineRequest): Promise<CreatedMachine> {
+  async createMachine(request: CreateMachineRequest, orderId: string | null = null): Promise<CreatedMachine> {
     const now = new Date();
     const lease: MachineLease = {
       id: `machine_${randomUUID().replaceAll("-", "").slice(0, 16)}`,
@@ -58,6 +58,8 @@ export class MachineService {
       expiresAt: new Date(now.getTime() + request.durationMinutes * 60_000).toISOString(),
       terminatedAt: null,
       failureReason: null,
+      orderId,
+      requestId: request.requestId ?? null,
     };
 
     await this.store.create(lease);
@@ -75,6 +77,13 @@ export class MachineService {
   // background task after the create response has been sent.
   async provisionMachine(id: string): Promise<void> {
     await this.provision(id);
+  }
+
+  // Resolve a lease by its MPP order id. Unauthenticated: the order id is
+  // derived from the buyer's unguessable request_id, and callers only project
+  // non-sensitive order status from it (no tokens, no connection details).
+  async findByOrderId(orderId: string): Promise<MachineLease | null> {
+    return this.store.getByOrderId(orderId);
   }
 
   async getMachine(id: string, bearerToken: string): Promise<MachineLease | null> {

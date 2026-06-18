@@ -242,6 +242,8 @@ describe("compute storefront", () => {
       expiresAt: new Date(now.getTime() - 3_600_000).toISOString(),
       terminatedAt: null,
       failureReason: null,
+      orderId: null,
+      requestId: null,
     };
     await store.create(lease);
 

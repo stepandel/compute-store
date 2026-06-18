@@ -41,8 +41,8 @@ export default async function Home() {
     `It leases temporary bare ${product.image} Linux machines with SSH access, billed per minute.`,
     "",
     `1. Read ${baseUrl}/llms.txt for the full machine-readable instructions.`,
-    `2. To buy, POST ${baseUrl}/api/checkout with JSON:`,
-    `   {"duration_minutes": 60, "ssh_public_key": "<your ssh public key>"}`,
+    `2. To buy, POST ${baseUrl}/api/machine/mpp/orders with JSON:`,
+    `   {"request_id": "<uuid>", "duration_minutes": 60, "ssh_public_key": "<your ssh public key>"}`,
     "3. You will get an HTTP 402 with an MPP payment challenge. Pay it with the",
     "   Stripe Link CLI (preferred) and retry the same request.",
     "4. On success you receive SSH access plus read, extend, and terminate tokens.",
@@ -69,7 +69,7 @@ export default async function Home() {
             <li className="from-agent">
               <span className="actor">agent</span>
               <span className="arrow">→</span>
-              <code className="msg">POST /api/checkout</code>
+              <code className="msg">POST /api/machine/mpp/orders</code>
               <span className="note">duration + ssh key</span>
             </li>
             <li className="from-store amber-line">
@@ -144,7 +144,7 @@ export default async function Home() {
           </p>
           <ol className="steps">
             <li>
-              <code>POST /api/checkout</code> returns <code>402</code>.
+              <code>POST /api/machine/mpp/orders</code> returns <code>402</code>.
             </li>
             <li>
               Create an approved Link CLI spend request (<code>shared_payment_token</code>).

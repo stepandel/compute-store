@@ -13,6 +13,7 @@ export interface LeaseStoreBackend {
   createCapabilityTokens(tokens: LeaseCapabilityToken[]): Promise<void>;
   getCapabilityTokenByHash(tokenHash: string): Promise<LeaseCapabilityToken | null>;
   get(id: string): Promise<MachineLease | null>;
+  getByOrderId(orderId: string): Promise<MachineLease | null>;
   markActive(
     id: string,
     providerServerId: string,
@@ -83,6 +84,11 @@ export class FileLeaseStore implements LeaseStoreBackend {
   async get(id: string): Promise<MachineLease | null> {
     const data = await this.read();
     return data.machines.find((lease) => lease.id === id) ?? null;
+  }
+
+  async getByOrderId(orderId: string): Promise<MachineLease | null> {
+    const data = await this.read();
+    return data.machines.find((lease) => lease.orderId === orderId) ?? null;
   }
 
   async markActive(
@@ -227,6 +233,11 @@ export class RedisRestLeaseStore implements LeaseStoreBackend {
   async get(id: string): Promise<MachineLease | null> {
     const data = await this.read();
     return data.machines.find((lease) => lease.id === id) ?? null;
+  }
+
+  async getByOrderId(orderId: string): Promise<MachineLease | null> {
+    const data = await this.read();
+    return data.machines.find((lease) => lease.orderId === orderId) ?? null;
   }
 
   async markActive(

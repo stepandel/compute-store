@@ -23,7 +23,7 @@ describe("machine create route", () => {
       const body = (await response.json()) as { error?: string };
 
       assert.equal(response.status, 403);
-      assert.match(body.error ?? "", /Use POST \/api\/checkout/);
+      assert.match(body.error ?? "", /Use POST \/api\/machine\/mpp\/orders/);
     } finally {
       restoreEnv("PROVIDER", originalProvider);
       restoreEnv("ALLOW_UNPAID_MACHINE_CREATE", originalAllow);

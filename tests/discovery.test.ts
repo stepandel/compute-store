@@ -7,7 +7,7 @@ describe("agent discovery", () => {
     const text = llmsText();
 
     assert.match(text, /Agentic Compute Storefront/);
-    assert.ok(text.includes("POST /api/checkout"));
+    assert.ok(text.includes("POST /api/machine/mpp/orders"));
     assert.match(text, /HTTP 402/);
     assert.match(text, /Stripe-backed MPP payment credential/);
     assert.match(text, /Stripe Link CLI MPP SPT/);
@@ -30,7 +30,7 @@ describe("agent discovery", () => {
     assert.equal(manifest.auth.type, "lease_capability_tokens");
     assert.equal(manifest.payments.protocol, "mpp");
     assert.equal(manifest.payments.processor, "stripe");
-    assert.deepEqual(manifest.payments.methods, ["stripe-spt"]);
+    assert.deepEqual(manifest.payments.methods, ["stripe_spt"]);
     assert.equal(manifest.payments.environment, "production");
     assert.equal(manifest.payment_client_guidance.recommended.id, "stripe-link-cli-mpp-spt");
     assert.ok(manifest.payment_client_guidance.recommended.command_sequence[0].includes("mpp decode"));
@@ -43,7 +43,10 @@ describe("agent discovery", () => {
     assert.equal(manifest.acceptable_use_url, "http://localhost:3000/acceptable-use");
     assert.ok(manifest.checkout_guidance.some((item) => item.includes("HTTP 402")));
     assert.ok(manifest.usage_policy.prohibited_uses.some((item) => item.includes("Spam")));
-    assert.equal(manifest.endpoints.checkout.path, "/api/checkout");
+    assert.equal(manifest.endpoints.checkout.path, "/api/machine/mpp/orders");
+    assert.equal(manifest.endpoints.validate.path, "/api/machine/mpp/orders/validate");
+    assert.equal(manifest.endpoints.order_status.path, "/api/machine/mpp/orders/{order_id}");
+    assert.equal(manifest.payments.idempotency_key, "request_id");
     assert.equal(manifest.endpoints.read.auth, "Bearer <read_token>");
     assert.equal(manifest.openapi_url, "/openapi.json");
   });
@@ -52,13 +55,16 @@ describe("agent discovery", () => {
     const spec = openApiDocument();
 
     assert.equal(spec.openapi, "3.1.0");
-    assert.ok(spec.paths["/api/checkout"]);
-    assert.equal(Reflect.has(spec.paths, "/api/checkout/sandbox"), false);
+    assert.ok(spec.paths["/api/machine/mpp/orders"]);
+    assert.ok(spec.paths["/api/machine/mpp/orders/validate"]);
+    assert.ok(spec.paths["/api/machine/mpp/orders/{order_id}"]);
+    assert.equal(Reflect.has(spec.paths, "/api/checkout"), false);
     assert.ok(spec.paths["/api/machines"]);
     assert.ok(spec.paths["/api/machines/{machine_id}"]);
     assert.ok(spec.paths["/api/machines/{machine_id}/extend"]);
     assert.ok(spec.components.securitySchemes.readToken);
-    assert.ok(spec.components.schemas.CheckoutMachineResponse);
+    assert.ok(spec.components.schemas.MppOrder);
+    assert.ok(spec.components.schemas.ValidateOrderResponse);
     assert.ok(spec.components.schemas.MachineWithManagement);
   });
 });

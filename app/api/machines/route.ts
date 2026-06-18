@@ -17,7 +17,7 @@ export async function POST(request: Request) {
 
     if (!loadSettings().allowUnpaidMachineCreate) {
       return NextResponse.json(
-        { error: "Unpaid machine creation is disabled. Use POST /api/checkout." },
+        { error: "Unpaid machine creation is disabled. Use POST /api/machine/mpp/orders." },
         { status: 403 },
       );
     }

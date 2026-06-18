@@ -19,12 +19,13 @@ function resolveServiceUrl(request?: Request): string {
 }
 
 const checkoutGuidance = [
-  "Optional preflight: POST /api/checkout/validate with the same body to confirm the order and read the quote and payment methods before paying. No payment is composed and no machine is created.",
-  "Use POST /api/checkout for purchases. Do not use POST /api/machines unless the operator explicitly enabled unpaid local/dev provisioning.",
-  "Submit duration_minutes and ssh_public_key as JSON. Optionally include a request_id and reuse it (with an otherwise identical body) across validate and checkout so the same order resolves to the same payment challenge.",
-  "If the service returns HTTP 402, inspect the MPP payment challenges and retry the same request with a Stripe-backed MPP credential.",
+  "Generate a UUID request_id and include it in every body. It is the idempotency key: reuse the same request_id (with an otherwise identical body) across validate, the unpaid create, and the paid retry so the same order resolves to the same payment challenge and the same order_id.",
+  "Optional preflight: POST /api/machine/mpp/orders/validate with the order body to read the quote and accepted payment methods. No payment is composed and no machine is created.",
+  "Use POST /api/machine/mpp/orders for purchases. Do not use POST /api/machines unless the operator explicitly enabled unpaid local/dev provisioning.",
+  "The first POST /api/machine/mpp/orders (no credential) returns HTTP 402 with MPP payment challenges and { order_id, status: 'unpaid' }. Inspect the WWW-Authenticate headers and retry the identical body with a Stripe-backed MPP credential.",
   "Production checkout requires live Stripe credentials and a live Stripe Shared Payment Token for the advertised profile.",
-  "After paid checkout succeeds, store the returned management tokens securely and poll the machine with read_token until status is active.",
+  "On success you receive HTTP 202 with the settled order (order_id, payment_status: 'paid') and the machine plus its management tokens. Store the tokens securely and poll the machine with read_token until status is active.",
+  "Poll GET /api/machine/mpp/orders/{order_id} for payment_status, or the machine read endpoint for provisioning status.",
   "Terminate the machine with terminate_token as soon as the task is complete.",
 ];
 
@@ -39,7 +40,7 @@ const paymentClientGuidance = {
       "npx @stripe/link-cli mpp decode --challenge '<WWW-Authenticate Payment challenge>'",
       "npx @stripe/link-cli payment-methods list",
       "npx @stripe/link-cli spend-request create --payment-method-id <payment_method_id> --credential-type shared_payment_token --network-id <network_id_from_challenge> --amount 399 --currency usd --context '<100+ character purchase rationale shown to the owner>' --line-item 'name:60 minute bare Linux machine lease,unit_amount:399,quantity:1' --total 'type:total,display_text:Total,amount:399' --request-approval",
-      "npx @stripe/link-cli mpp pay {service_url}/api/checkout --spend-request-id <approved_spend_request_id> --method POST --header 'Content-Type: application/json' --data '{\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
+      "npx @stripe/link-cli mpp pay {service_url}/api/machine/mpp/orders --spend-request-id <approved_spend_request_id> --method POST --header 'Content-Type: application/json' --data '{\"request_id\":\"<uuid>\",\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
     ],
   },
   also_supported: [
@@ -124,10 +125,13 @@ export function agentStorefrontManifest(request?: Request) {
     payments: {
       protocol: "mpp",
       processor: "stripe",
-      validate_path: "/api/checkout/validate",
-      checkout_path: "/api/checkout",
+      product_type: "machine_lease",
+      validate_path: "/api/machine/mpp/orders/validate",
+      checkout_path: "/api/machine/mpp/orders",
+      order_status_path: "/api/machine/mpp/orders/{order_id}",
       challenge_status: 402,
-      methods: ["stripe-spt"],
+      idempotency_key: "request_id",
+      methods: ["stripe_spt"],
       pricing: {
         currency: "usd",
         base_fee_cents: Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99),
@@ -146,14 +150,21 @@ export function agentStorefrontManifest(request?: Request) {
     endpoints: {
       validate: {
         method: "POST",
-        path: "/api/checkout/validate",
+        path: "/api/machine/mpp/orders/validate",
         auth: "none",
         summary: "Preflight: validate the order and return the quote and payment methods. No payment, no machine created.",
       },
       checkout: {
         method: "POST",
-        path: "/api/checkout",
+        path: "/api/machine/mpp/orders",
         auth: "MPP payment",
+        summary: "Create the order. Without a credential returns 402 with MPP challenges; with Authorization: Payment returns 202 with the settled order and machine.",
+      },
+      order_status: {
+        method: "GET",
+        path: "/api/machine/mpp/orders/{order_id}",
+        auth: "none",
+        summary: "Poll order payment_status by order_id (derived from request_id).",
       },
       create_dev: {
         method: "POST",
@@ -209,21 +220,25 @@ Pricing:
 - base fee: $${formatCents(Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99))}
 - minute rate: $${formatCents(Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5))}/minute
 
+Generate a UUID request_id and send it in every body below. It is the idempotency key: reuse the same request_id (with an identical body) across validate, create, and the paid retry. The order_id is derived from it.
+
 Optional preflight (recommended):
-POST /api/checkout/validate
+POST /api/machine/mpp/orders/validate
 Content-Type: application/json
-JSON: { "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
-Returns { protocol, valid, methods, quote } with no payment and no machine created. Reuse the same body on checkout.
+JSON: { "request_id": "<uuid>", "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
+Returns { protocol, methods, product_type, quote, request_id } with no payment and no machine created. Reuse the same body on create.
 
-Create a machine:
-POST /api/checkout
+Create an order (and machine):
+POST /api/machine/mpp/orders
 Content-Type: application/json
-JSON: { "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
+JSON: { "request_id": "<uuid>", "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
 
-If payment is required, the service responds with HTTP 402 and MPP payment challenges.
-Retry the same request with a Stripe-backed MPP payment credential. After successful payment, the response includes:
-- checkout.status = paid
-- checkout.quote
+Without a payment credential the service responds with HTTP 402, MPP payment challenges (WWW-Authenticate), and { order_id, status: "unpaid" }.
+Retry the identical body with a Stripe-backed MPP payment credential. After successful payment you receive HTTP 202 with:
+- order_id
+- status = settled, payment_status = paid, is_paid = true
+- current_step
+- order_complete_url
 - machine
 
 The machine object includes resource-scoped management tokens:
@@ -242,7 +257,11 @@ Payment client guidance:
 - Do not use Link CLI virtual cards; this API does not expose a standard card checkout form.
 - Do not use manual card entry or crypto payment clients; they are not accepted by this storefront.
 
-Read status:
+Poll order payment status (no auth; keyed by order_id):
+GET /api/machine/mpp/orders/{order_id}
+Returns { order_id, payment_status, is_paid, current_step, order_complete_url }.
+
+Read machine status:
 GET /api/machines/{machine_id}
 Authorization: Bearer <read_token>
 
@@ -263,7 +282,7 @@ ${prohibitedUses.map((item) => `- Do not use machines for: ${item}`).join("\n")}
 
 Important:
 - Treat all management tokens as secrets.
-- Use /api/checkout, not /api/machines, for agent purchases.
+- Use /api/machine/mpp/orders, not /api/machines, for agent purchases.
 - Do not use the unpaid dev endpoint unless the operator explicitly enabled it for local testing.
 - Do not retry failed payments blindly.
 - Do not expose tokens in logs or chat unless explicitly required.
@@ -331,12 +350,12 @@ export function openApiDocument(request?: Request) {
           },
         },
       },
-      "/api/checkout/validate": {
+      "/api/machine/mpp/orders/validate": {
         post: {
-          operationId: "validateCheckout",
+          operationId: "validateOrder",
           summary: "Preflight validate an order and return its quote and payment methods.",
           description:
-            "Submit the desired lease to confirm it is valid and to read the final quote and accepted payment methods. No payment is composed and no machine is created. Reuse the same body (notably request_id) on POST /api/checkout.",
+            "Submit the desired lease to confirm it is valid and to read the final quote and accepted payment methods. No payment is composed and no machine is created. Reuse the same body (including request_id) on POST /api/machine/mpp/orders.",
           requestBody: {
             required: true,
             content: {
@@ -347,10 +366,10 @@ export function openApiDocument(request?: Request) {
           },
           responses: {
             "200": {
-              description: "The order is valid. Returns the protocol, accepted payment methods, and quote.",
+              description: "The order is valid. Returns the protocol, accepted payment methods, product type, and quote.",
               content: {
                 "application/json": {
-                  schema: { $ref: "#/components/schemas/ValidateCheckoutResponse" },
+                  schema: { $ref: "#/components/schemas/ValidateOrderResponse" },
                 },
               },
             },
@@ -358,12 +377,12 @@ export function openApiDocument(request?: Request) {
           },
         },
       },
-      "/api/checkout": {
+      "/api/machine/mpp/orders": {
         post: {
-          operationId: "checkoutMachine",
-          summary: "Create a temporary bare Linux machine after MPP payment.",
+          operationId: "createOrder",
+          summary: "Create an MPP order (and machine) after payment.",
           description:
-            "Submit the desired lease. If no valid MPP credential is present, the response is HTTP 402 with MPP payment challenges. Retry the same request with an MPP payment credential to provision the machine.",
+            "Submit the desired lease with a UUID request_id. Without a valid MPP credential the response is HTTP 402 with MPP payment challenges and { order_id, status: 'unpaid' }. Retry the identical body with an MPP payment credential to settle the order and provision the machine. request_id is the idempotency key.",
           requestBody: {
             required: true,
             content: {
@@ -374,7 +393,7 @@ export function openApiDocument(request?: Request) {
           },
           responses: {
             "202": {
-              description: "Paid checkout accepted. The response includes the quote and machine management tokens.",
+              description: "Order settled. The response includes the order, payment_status, and machine management tokens.",
               headers: {
                 "Payment-Receipt": {
                   description: "MPP payment receipt.",
@@ -383,14 +402,40 @@ export function openApiDocument(request?: Request) {
               },
               content: {
                 "application/json": {
-                  schema: { $ref: "#/components/schemas/CheckoutMachineResponse" },
+                  schema: { $ref: "#/components/schemas/MppOrder" },
                 },
               },
             },
             "400": { $ref: "#/components/responses/Error" },
             "402": {
-              description: "MPP payment required. Inspect WWW-Authenticate headers for payment challenges.",
+              description:
+                "MPP payment required. Inspect WWW-Authenticate headers for payment challenges; body is { order_id, status: 'unpaid' }.",
             },
+          },
+        },
+      },
+      "/api/machine/mpp/orders/{order_id}": {
+        get: {
+          operationId: "getOrder",
+          summary: "Poll order payment status by order_id.",
+          parameters: [
+            {
+              name: "order_id",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "The order payment/fulfilment status.",
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/MppOrder" },
+                },
+              },
+            },
+            "404": { $ref: "#/components/responses/Error" },
           },
         },
       },
@@ -500,9 +545,16 @@ export function openApiDocument(request?: Request) {
         },
         CreateMachineRequest: {
           type: "object",
-          required: ["duration_minutes", "ssh_public_key"],
+          required: ["request_id", "duration_minutes", "ssh_public_key"],
           additionalProperties: false,
           properties: {
+            request_id: {
+              type: "string",
+              format: "uuid",
+              description:
+                "Idempotency key (UUID). Reuse the same value across validate, create, and the paid retry (with an otherwise identical body) so the same order resolves to the same payment challenge and order_id.",
+              pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+            },
             duration_minutes: {
               type: "integer",
               minimum: product.minDurationMinutes,
@@ -511,13 +563,6 @@ export function openApiDocument(request?: Request) {
             ssh_public_key: {
               type: "string",
               description: "SSH public key to install on the leased machine.",
-            },
-            request_id: {
-              type: "string",
-              description:
-                "Optional client correlation id. Reuse the same value across validate and checkout (with an otherwise identical body) so the same order resolves to the same payment challenge. Not required for payment.",
-              maxLength: 200,
-              pattern: "^[A-Za-z0-9_.:-]+$",
             },
           },
         },
@@ -564,19 +609,18 @@ export function openApiDocument(request?: Request) {
             },
           ],
         },
-        CheckoutMachineResponse: {
+        MppOrder: {
           type: "object",
-          required: ["checkout", "machine"],
+          required: ["order_id", "status", "payment_status", "is_paid", "current_step", "order_complete_url"],
           properties: {
-            checkout: {
-              type: "object",
-              required: ["status", "quote"],
-              properties: {
-                status: { type: "string", const: "paid" },
-                mode: { type: "string", const: "mpp" },
-                quote: { $ref: "#/components/schemas/CheckoutQuote" },
-              },
-            },
+            order_id: { type: "string" },
+            status: { type: "string", enum: ["unpaid", "settled", "settled_pending_webhook"] },
+            payment_status: { type: "string", enum: ["unpaid", "paid", "settled_pending_webhook"] },
+            is_paid: { type: "boolean" },
+            current_step: { type: "string" },
+            order_complete_url: { type: "string", format: "uri" },
+            // Present on the 202 create response (with management tokens) and on
+            // the order poll (without tokens). Absent until the order is paid.
             machine: { $ref: "#/components/schemas/MachineWithManagement" },
           },
         },
@@ -605,27 +649,15 @@ export function openApiDocument(request?: Request) {
             currency: { type: "string", const: "usd" },
           },
         },
-        ValidateCheckoutResponse: {
+        ValidateOrderResponse: {
           type: "object",
-          required: ["protocol", "valid", "methods", "quote", "checkout_path"],
+          required: ["protocol", "methods", "product_type", "quote", "request_id"],
           properties: {
             protocol: { type: "string", const: "mpp" },
-            valid: { type: "boolean", const: true },
-            methods: {
-              type: "array",
-              items: {
-                type: "object",
-                required: ["id", "processor", "payment_method_types"],
-                properties: {
-                  id: { type: "string", const: "stripe-spt" },
-                  processor: { type: "string", const: "stripe" },
-                  payment_method_types: { type: "array", items: { type: "string" } },
-                },
-              },
-            },
+            methods: { type: "array", items: { type: "string" } },
+            product_type: { type: "string", const: "machine_lease" },
             quote: { $ref: "#/components/schemas/CheckoutQuote" },
-            checkout_path: { type: "string", const: "/api/checkout" },
-            request_id: { type: "string" },
+            request_id: { type: "string", format: "uuid" },
           },
         },
         ManagementTokens: {

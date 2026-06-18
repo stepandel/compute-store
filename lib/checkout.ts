@@ -22,24 +22,16 @@ export type MppCheckout = {
   payment: ReturnType<typeof Mppx.create>;
 };
 
-export type CheckoutMethod = {
-  id: "stripe-spt";
-  processor: "stripe";
-  payment_method_types: string[];
-};
+// MPP payment methods the storefront accepts, as the bare method strings the
+// validate response advertises (mirrors PostalForm's `["stripe_spt", ...]`).
+// The actual WWW-Authenticate challenge carries the canonical mppx method name
+// ("stripe") and the networkId the agent mints its SPT against.
+export const CHECKOUT_METHODS = ["stripe_spt"] as const;
 
-// Payment methods the storefront accepts, surfaced by the preflight validate
-// endpoint and storefront discovery. Pure read of settings — does not require
-// MPP/Stripe secrets to be present, so it stays callable during preflight.
-export function checkoutMethods(): CheckoutMethod[] {
-  const settings = loadSettings();
-  return [
-    {
-      id: "stripe-spt",
-      processor: "stripe",
-      payment_method_types: settings.checkout.stripePaymentMethodTypes,
-    },
-  ];
+// Pure — does not require MPP/Stripe secrets, so it stays callable during the
+// preflight validate step even before payment credentials are configured.
+export function checkoutMethods(): string[] {
+  return [...CHECKOUT_METHODS];
 }
 
 export function quoteCheckout(request: CreateMachineRequest): CheckoutQuote {

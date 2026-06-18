@@ -55,6 +55,8 @@ function lease(id: string): MachineLease {
     expiresAt: now,
     terminatedAt: null,
     failureReason: null,
+    orderId: null,
+    requestId: null,
   };
 }
 
