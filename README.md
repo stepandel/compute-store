@@ -55,7 +55,9 @@ Generate `MPP_SECRET_KEY` with:
 openssl rand -base64 32
 ```
 
-Paid checkout is exposed at `POST /api/checkout`. It follows the MPP pattern used by agentic checkout examples such as PostalForm and Prospect Butcher Co.: submit the order details, receive an HTTP `402` payment challenge if no credential is present, retry with a live Stripe-backed MPP payment credential, and then receive the fulfilled resource.
+Paid checkout is exposed at `POST /api/machine/mpp/orders`, modeled on PostalForm's machine MPP endpoints. Submit the order details with a UUID `request_id`, receive an HTTP `402` payment challenge (plus `{ order_id, status: "unpaid" }`) if no credential is present, retry the identical body with a live Stripe-backed MPP payment credential, and then receive the settled order and fulfilled machine. A preflight `POST /api/machine/mpp/orders/validate` returns the quote and accepted methods without composing payment, and `GET /api/machine/mpp/orders/{order_id}` polls payment status.
+
+`request_id` is the idempotency key: reuse the same UUID (with an otherwise identical body) across validate, create, and the paid retry. It deterministically derives `order_id`, so a retried paid call resolves to the existing lease instead of provisioning a second machine.
 
 For Stripe SPT/card-style MPP payments, create a live Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_...` value. Use a matching live `STRIPE_SECRET_KEY=sk_live_...`. Test-mode Stripe keys and sandbox payment tokens are rejected by production checkout. The default accepted SPT-backed payment methods are `card,link`.
 
@@ -78,11 +80,11 @@ npx @stripe/link-cli spend-request create \
   --total "type:total,display_text:Total,amount:399" \
   --request-approval
 
-npx @stripe/link-cli mpp pay http://localhost:3000/api/checkout \
+npx @stripe/link-cli mpp pay http://localhost:3000/api/machine/mpp/orders \
   --spend-request-id <approved_spend_request_id> \
   --method POST \
   --header 'Content-Type: application/json' \
-  --data '{"duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}'
+  --data '{"request_id":"<uuid>","duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}'
 ```
 
 Any MPP client that can create a Stripe SPT for the advertised challenge and retry with `Authorization: Payment ...` should work. Link CLI virtual cards and manual card entry are not supported because this storefront exposes an agentic MPP endpoint, not a browser card checkout form. Crypto MPP is intentionally not accepted.
@@ -120,33 +122,40 @@ curl -s http://localhost:3000/.well-known/agent-storefront.json
 curl -s http://localhost:3000/openapi.json
 ```
 
-Paid checkout for a machine:
+Preflight (optional) — quote and accepted methods, no payment:
 
 ```bash
-curl -i http://localhost:3000/api/checkout \
+curl -s http://localhost:3000/api/machine/mpp/orders/validate \
   -H 'content-type: application/json' \
   -d '{
+    "request_id": "11111111-1111-4111-8111-111111111111",
     "duration_minutes": 60,
     "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey user@example"
   }'
 ```
 
-Without an MPP credential, the response is `402 Payment Required` with `WWW-Authenticate` payment challenges. Retry the same request with a valid MPP payment credential to receive:
+Create an order (and machine):
+
+```bash
+curl -i http://localhost:3000/api/machine/mpp/orders \
+  -H 'content-type: application/json' \
+  -d '{
+    "request_id": "11111111-1111-4111-8111-111111111111",
+    "duration_minutes": 60,
+    "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey user@example"
+  }'
+```
+
+Without an MPP credential, the response is `402 Payment Required` with `WWW-Authenticate` payment challenges and `{ "order_id": "order_...", "status": "unpaid" }`. Retry the identical body with a valid MPP payment credential to receive:
 
 ```json
 {
-  "checkout": {
-    "status": "paid",
-    "quote": {
-      "product_id": "bare-linux-machine",
-      "duration_minutes": 60,
-      "base_fee_cents": 99,
-      "unit_price_cents_per_minute": 5,
-      "amount_cents": 399,
-      "amount": "3.99",
-      "currency": "usd"
-    }
-  },
+  "order_id": "order_...",
+  "status": "settled",
+  "payment_status": "paid",
+  "is_paid": true,
+  "current_step": "provisioning",
+  "order_complete_url": "http://localhost:3000/api/machine/mpp/orders/order_...",
   "machine": {
     "machine_id": "machine_...",
     "management": {
@@ -156,6 +165,12 @@ Without an MPP credential, the response is `402 Payment Required` with `WWW-Auth
     }
   }
 }
+```
+
+Poll order payment status (no auth; keyed by `order_id`):
+
+```bash
+curl -s http://localhost:3000/api/machine/mpp/orders/<order_id>
 ```
 
 The unpaid local/dev provisioning endpoint is disabled by default, including in dry-run mode. It is available only when `ALLOW_UNPAID_MACHINE_CREATE=true`:
@@ -209,8 +224,8 @@ curl -s http://localhost:3000/api/health
 
 ```mermaid
 flowchart TD
-  A["Agent or UI"] --> B["POST /api/checkout"]
-  B --> C["Validate duration + SSH key"]
+  A["Agent or UI"] --> B["POST /api/machine/mpp/orders"]
+  B --> C["Validate request_id + duration + SSH key"]
   C --> P["MPP payment challenge or receipt"]
   P --> D["Create lease in JSON store"]
   D --> E["Provider creates server"]
