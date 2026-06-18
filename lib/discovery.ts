@@ -1,26 +1,29 @@
 import { product } from "@/lib/config";
 import { acceptableUsePath, prohibitedUses } from "@/lib/policy";
 
-const serviceUrl = resolveServiceUrl();
-
 // Prefer an explicit public URL; on Vercel fall back to the deployment URL so
 // discovery/OpenAPI never silently advertise localhost in a deployed env.
-function resolveServiceUrl(): string {
+function resolveServiceUrl(request?: Request): string {
   if (process.env.NEXT_PUBLIC_STORE_URL) {
     return process.env.NEXT_PUBLIC_STORE_URL;
+  }
+  const forwardedHost = request?.headers.get("x-forwarded-host") ?? request?.headers.get("host");
+  if (forwardedHost) {
+    const forwardedProto = request?.headers.get("x-forwarded-proto") ?? "https";
+    return `${forwardedProto}://${forwardedHost}`;
   }
   if (process.env.VERCEL_URL) {
     return `https://${process.env.VERCEL_URL}`;
   }
   return "http://localhost:3000";
 }
-const acceptableUseUrl = new URL(acceptableUsePath, serviceUrl).toString();
 
 const checkoutGuidance = [
   "Use POST /api/checkout for purchases. Do not use POST /api/machines unless the operator explicitly enabled unpaid local/dev provisioning.",
   "Submit duration_minutes and ssh_public_key as JSON.",
   "If the service returns HTTP 402, inspect the MPP payment challenges and retry the same request with a Stripe-backed MPP credential.",
   "For Stripe sandbox validation, use the same MPP flow with Stripe Link CLI test mode: create the shared_payment_token spend request with --test when the challenge network_id is a profile_test_... value.",
+  "If Link CLI cannot attach a shared_payment_token for a profile_test_... challenge, use POST /api/checkout/sandbox with the same JSON body. This operator-sponsored sandbox endpoint mints the Stripe test SPT server-side and never exposes the seller test key.",
   "After paid checkout succeeds, store the returned management tokens securely and poll the machine with read_token until status is active.",
   "Terminate the machine with terminate_token as soon as the task is complete.",
 ];
@@ -48,9 +51,21 @@ const paymentClientGuidance = {
     real_provider_note:
       "Stripe test-mode payments are accepted only for dry-run provisioning by default. Real providers such as Hetzner require live payments unless the operator explicitly enables ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER for a controlled infrastructure test.",
     fallback_note:
-      "Some Stripe sandbox accounts cannot grant network-scoped Shared Payment Tokens (the SPT grant rejects seller_details[network_id] with 'Received unknown parameter'). When that happens, Link CLI reports the spend request as approved but never attaches a shared_payment_token, so `mpp pay` fails locally with 'Spend request does not have a shared payment token'. Do not retry Link CLI in that case — fall back to the account-scoped test SPT client below (id: mppx-cli-account-scoped-test-spt).",
+      "Some Stripe sandbox accounts cannot grant network-scoped Shared Payment Tokens (the SPT grant rejects seller_details[network_id] with 'Received unknown parameter'). When that happens, Link CLI reports the spend request as approved but never attaches a shared_payment_token, so `mpp pay` fails locally with 'Spend request does not have a shared payment token'. Do not retry Link CLI in that case — use the operator-sponsored sandbox checkout endpoint first (id: operator-sponsored-sandbox-checkout). If you are the operator and have the seller test secret locally, the mppx CLI fallback below is also supported.",
   },
   also_supported: [
+    {
+      id: "operator-sponsored-sandbox-checkout",
+      name: "Operator-sponsored sandbox checkout",
+      summary:
+        "Public sandbox-only fallback for agents that can access only this live site. POST the same checkout JSON to /api/checkout/sandbox. The server mints a Stripe test SPT using its own test secret key, verifies payment through the normal MPP path, and provisions the machine. No Stripe secret is exposed to the agent and no real card is charged.",
+      credential_type: "server_minted_test_shared_payment_token",
+      applies_when:
+        "Sandbox challenges (network_id starts with profile_test_) AND Link CLI never mints a shared_payment_token.",
+      command_sequence: [
+        "curl -s {service_url}/api/checkout/sandbox -H 'content-type: application/json' -d '{\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
+      ],
+    },
     {
       id: "generic-mpp-stripe-spt-client",
       name: "Generic MPP client with Stripe SPT support",
@@ -88,7 +103,10 @@ const paymentClientGuidance = {
   ],
 };
 
-export function agentStorefrontManifest() {
+export function agentStorefrontManifest(request?: Request) {
+  const serviceUrl = resolveServiceUrl(request);
+  const acceptableUseUrl = new URL(acceptableUsePath, serviceUrl).toString();
+
   return {
     name: "Agentic Compute Storefront",
     description: "Lease a temporary bare Linux machine with SSH access and resource-scoped management tokens.",
@@ -169,6 +187,13 @@ export function agentStorefrontManifest() {
         path: "/api/checkout",
         auth: "MPP payment",
       },
+      sandbox_checkout: {
+        method: "POST",
+        path: "/api/checkout/sandbox",
+        auth: "none",
+        summary:
+          "Sandbox-only operator-sponsored checkout. Uses the same request body as /api/checkout and returns the same machine management tokens after server-side test SPT verification.",
+      },
       create_dev: {
         method: "POST",
         path: "/api/machines",
@@ -203,7 +228,10 @@ export function agentStorefrontManifest() {
   };
 }
 
-export function llmsText(): string {
+export function llmsText(request?: Request): string {
+  const serviceUrl = resolveServiceUrl(request);
+  const acceptableUseUrl = new URL(acceptableUsePath, serviceUrl).toString();
+
   return `# Agentic Compute Storefront
 
 This service leases one product: a temporary bare Linux machine.
@@ -245,6 +273,8 @@ Payment client guidance:
 - Sandbox test path: use the same MPP flow with STRIPE_SECRET_KEY=sk_test_..., STRIPE_PROFILE_ID=profile_test_..., and add --test to the Link CLI spend-request create command when the decoded network_id starts with profile_test_...
 - Sandbox payments create dry-run machines by default. Real providers such as Hetzner require live payments unless the operator explicitly enables ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER for a controlled infrastructure test.
 - Sandbox fallback (account-scoped test SPT): some Stripe sandbox accounts cannot grant network-scoped SPTs (the grant rejects seller_details[network_id] with "Received unknown parameter"). Symptom: Link CLI marks the spend request approved but never attaches a shared_payment_token, so "mpp pay" fails locally with "Spend request does not have a shared payment token". Do not retry Link CLI. Instead pay with the mppx CLI, which mints an account-scoped test SPT via POST /v1/test_helpers/shared_payment/granted_tokens and retries with Authorization: Payment:
+- Public sandbox fallback for agents without the seller test secret: POST the same JSON body to ${serviceUrl}/api/checkout/sandbox. This operator-sponsored endpoint mints the Stripe test SPT server-side, verifies it through the same MPP path, and returns the normal machine management tokens. No Stripe secret is exposed and no real card is charged.
+- Operator-local sandbox fallback (account-scoped test SPT): some Stripe sandbox accounts cannot grant network-scoped SPTs (the grant rejects seller_details[network_id] with "Received unknown parameter"). Symptom: Link CLI marks the spend request approved but never attaches a shared_payment_token, so "mpp pay" fails locally with "Spend request does not have a shared payment token". Do not retry Link CLI. If you are the operator and have the seller test secret locally, pay with the mppx CLI, which mints an account-scoped test SPT via POST /v1/test_helpers/shared_payment/granted_tokens and retries with Authorization: Payment:
     MPPX_STRIPE_SECRET_KEY=sk_test_... npx mppx ${serviceUrl}/api/checkout -X POST -J '{"duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}' -M paymentMethod=pm_card_visa
   (Use a Stripe test secret key for the seller profile's account; in this self-contained sandbox that is the storefront's own STRIPE_SECRET_KEY. Test mode only — charges a Stripe test PaymentIntent, no real money.)
 - Also supported: any MPP client that can create a Stripe Shared Payment Token for the advertised challenge and retry with Authorization: Payment.
@@ -287,7 +317,9 @@ function formatCents(cents: number): string {
   return (cents / 100).toFixed(2);
 }
 
-export function openApiDocument() {
+export function openApiDocument(request?: Request) {
+  const serviceUrl = resolveServiceUrl(request);
+
   return {
     openapi: "3.1.0",
     info: {
@@ -371,6 +403,41 @@ export function openApiDocument() {
             "402": {
               description: "MPP payment required. Inspect WWW-Authenticate headers for payment challenges.",
             },
+          },
+        },
+      },
+      "/api/checkout/sandbox": {
+        post: {
+          operationId: "sandboxCheckoutMachine",
+          summary: "Create a temporary bare Linux machine with operator-sponsored Stripe sandbox payment.",
+          description:
+            "Sandbox-only fallback for agents that cannot mint a Stripe test Shared Payment Token locally. Submit the same JSON body as /api/checkout. The server mints and verifies a Stripe test SPT through the normal MPP path, then provisions the machine.",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { $ref: "#/components/schemas/CreateMachineRequest" },
+              },
+            },
+          },
+          responses: {
+            "202": {
+              description:
+                "Operator-sponsored sandbox checkout accepted. The response includes the quote and machine management tokens.",
+              headers: {
+                "Payment-Receipt": {
+                  description: "MPP payment receipt.",
+                  schema: { type: "string" },
+                },
+              },
+              content: {
+                "application/json": {
+                  schema: { $ref: "#/components/schemas/CheckoutMachineResponse" },
+                },
+              },
+            },
+            "400": { $ref: "#/components/responses/Error" },
+            "503": { $ref: "#/components/responses/Error" },
           },
         },
       },

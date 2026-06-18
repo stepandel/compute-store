@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { CheckoutConfigurationError, createMppCheckout } from "@/lib/checkout";
+import {
+  assertOperatorSponsoredSandboxCheckoutAllowed,
+  CheckoutConfigurationError,
+  createMppCheckout,
+} from "@/lib/checkout";
 import { loadSettings } from "@/lib/config";
 
 describe("checkout configuration", () => {
@@ -35,6 +39,29 @@ describe("checkout configuration", () => {
 
     try {
       assert.throws(() => loadSettings(), /LEASE_STORE=redis-rest/);
+    } finally {
+      restoreEnv(original);
+    }
+  });
+
+  it("guards operator-sponsored sandbox checkout for real providers", () => {
+    const original = snapshotEnv([
+      "PROVIDER",
+      "STRIPE_SECRET_KEY",
+      "STRIPE_PROFILE_ID",
+      "ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER",
+    ]);
+
+    process.env.PROVIDER = "hetzner";
+    process.env.STRIPE_SECRET_KEY = "sk_test_123";
+    process.env.STRIPE_PROFILE_ID = "profile_test_123";
+    delete process.env.ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER;
+
+    try {
+      assert.throws(() => assertOperatorSponsoredSandboxCheckoutAllowed(), CheckoutConfigurationError);
+
+      process.env.ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER = "true";
+      assert.doesNotThrow(() => assertOperatorSponsoredSandboxCheckoutAllowed());
     } finally {
       restoreEnv(original);
     }

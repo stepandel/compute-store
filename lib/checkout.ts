@@ -1,6 +1,8 @@
 import Stripe from "stripe";
+import { Challenge } from "mppx";
+import { stripe as mppClientStripe } from "mppx/client";
 import { Mppx, stripe as mppStripe } from "mppx/server";
-import { loadSettings, type CheckoutSettings } from "@/lib/config";
+import { loadSettings, type CheckoutSettings, type Settings } from "@/lib/config";
 import type { CreateMachineRequest } from "@/lib/models";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -66,6 +68,45 @@ export function createMppCheckout(): MppCheckout {
   };
 }
 
+export function assertOperatorSponsoredSandboxCheckoutAllowed(settings: Settings = loadSettings()): void {
+  if (!settings.checkout.stripeSecretKey?.startsWith("sk_test_")) {
+    throw new CheckoutConfigurationError("Operator-sponsored sandbox checkout requires STRIPE_SECRET_KEY=sk_test_...");
+  }
+  if (!settings.checkout.stripeProfileId?.startsWith("profile_test_")) {
+    throw new CheckoutConfigurationError("Operator-sponsored sandbox checkout requires STRIPE_PROFILE_ID=profile_test_...");
+  }
+  if (settings.provider !== "dry-run" && !settings.allowTestPaymentsWithRealProvider) {
+    throw new CheckoutConfigurationError(
+      "Operator-sponsored sandbox checkout with a real provider requires ALLOW_TEST_PAYMENTS_WITH_REAL_PROVIDER=true.",
+    );
+  }
+}
+
+export async function createOperatorSponsoredSandboxCredential(
+  challengeResponse: Response,
+  paymentMethod = "pm_card_visa",
+): Promise<string> {
+  const settings = loadSettings();
+  assertOperatorSponsoredSandboxCheckoutAllowed(settings);
+
+  const clientCharge = mppClientStripe.charge({
+    createToken: async (parameters) =>
+      createStripeTestSpt({
+        stripeSecretKey: settings.checkout.stripeSecretKey!,
+        paymentMethod: parameters.paymentMethod ?? paymentMethod,
+        amount: parameters.amount,
+        currency: parameters.currency,
+        networkId: parameters.networkId,
+        expiresAt: parameters.expiresAt,
+        metadata: parameters.metadata,
+      }),
+    paymentMethod,
+  });
+  const challenge = Challenge.fromResponse(challengeResponse, { methods: [clientCharge] });
+
+  return clientCharge.createCredential({ challenge, context: {} });
+}
+
 export function checkoutComposeEntries(checkout: MppCheckout, quote: CheckoutQuote) {
   return [
     [
@@ -117,4 +158,74 @@ function checkoutMetadata(quote: CheckoutQuote): Record<string, string> {
     duration_minutes: String(quote.duration_minutes),
     amount_cents: String(quote.amount_cents),
   };
+}
+
+async function createStripeTestSpt(parameters: {
+  stripeSecretKey: string;
+  paymentMethod: string;
+  amount: string;
+  currency: string;
+  networkId: string | undefined;
+  expiresAt: number;
+  metadata?: Record<string, string> | undefined;
+}): Promise<string> {
+  const body = stripeSptBody(parameters, true);
+  let response = await postStripeTestSpt(parameters.stripeSecretKey, body);
+
+  if (!response.ok && (parameters.metadata || parameters.networkId)) {
+    const error = (await response.clone().json().catch(() => null)) as { error?: { message?: string } } | null;
+    if (error?.error?.message?.includes("Received unknown parameter")) {
+      response = await postStripeTestSpt(parameters.stripeSecretKey, stripeSptBody(parameters, false));
+    }
+  }
+
+  if (!response.ok) {
+    const error = (await response.json().catch(() => null)) as { error?: { message?: string } } | null;
+    throw new CheckoutConfigurationError(`Failed to create sandbox SPT: ${error?.error?.message ?? response.status}`);
+  }
+
+  const payload = (await response.json()) as { id?: string };
+  if (!payload.id) {
+    throw new CheckoutConfigurationError("Stripe sandbox SPT response did not include an id.");
+  }
+  return payload.id;
+}
+
+function stripeSptBody(
+  parameters: {
+    paymentMethod: string;
+    amount: string;
+    currency: string;
+    networkId: string | undefined;
+    expiresAt: number;
+    metadata?: Record<string, string> | undefined;
+  },
+  includeSellerDetails: boolean,
+): URLSearchParams {
+  const body = new URLSearchParams({
+    payment_method: parameters.paymentMethod,
+    "usage_limits[currency]": parameters.currency,
+    "usage_limits[max_amount]": parameters.amount,
+    "usage_limits[expires_at]": parameters.expiresAt.toString(),
+  });
+  if (includeSellerDetails && parameters.networkId) {
+    body.set("seller_details[network_id]", parameters.networkId);
+  }
+  if (includeSellerDetails && parameters.metadata) {
+    for (const [key, value] of Object.entries(parameters.metadata)) {
+      body.set(`metadata[${key}]`, value);
+    }
+  }
+  return body;
+}
+
+function postStripeTestSpt(stripeSecretKey: string, body: URLSearchParams): Promise<Response> {
+  return fetch("https://api.stripe.com/v1/test_helpers/shared_payment/granted_tokens", {
+    method: "POST",
+    headers: {
+      authorization: `Basic ${Buffer.from(`${stripeSecretKey}:`).toString("base64")}`,
+      "content-type": "application/x-www-form-urlencoded",
+    },
+    body,
+  });
 }
