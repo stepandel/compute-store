@@ -58,7 +58,11 @@ export function checkoutComposeEntries(checkout: MppCheckout, quote: CheckoutQuo
     [
       "stripe/charge",
       {
-        amount: quote.amount,
+        // MPP/Stripe SPT amounts are integer minor units (cents), matching
+        // Stripe's PaymentIntent amount. quote.amount ("3.99") is a display
+        // string; advertising it makes the client's SPT spend-request creation
+        // fail because it isn't a valid minor-unit amount.
+        amount: String(quote.amount_cents),
         description: `${quote.duration_minutes} minute ${quote.product_id} lease`,
         expires: checkoutChallengeExpires(),
         meta: checkoutMetadata(quote),
