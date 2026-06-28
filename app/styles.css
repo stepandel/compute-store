@@ -203,7 +203,7 @@ h1 {
 
 .terms {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 1px;
   margin: 22px 0 0;
   border: 1px solid var(--line);
@@ -434,7 +434,7 @@ h1 {
   }
 
   .terms {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
   }
 
   .agent-grid {

@@ -41,7 +41,7 @@ export default async function Home() {
     `It leases temporary machines with SSH access, billed per minute. Two products:`,
     ...products.map(
       (entry) =>
-        `  - ${entry.id}: ${entry.label}, $${formatCents(entry.baseFeeCents)} + $${formatCents(
+        `  - ${entry.id}: ${entry.label}, ${formatCents(entry.baseFeeCents)} + ${formatCents(
           entry.priceCentsPerMinute,
         )}/min.`,
     ),
@@ -102,7 +102,7 @@ export default async function Home() {
               <div key={entry.id}>
                 <dt>{entry.label}</dt>
                 <dd>
-                  ${formatCents(entry.baseFeeCents)} + ${formatCents(entry.priceCentsPerMinute)}/min ·{" "}
+                  {formatCents(entry.baseFeeCents)} + {formatCents(entry.priceCentsPerMinute)}/min ·{" "}
                   {entry.minDurationMinutes}–{entry.maxDurationMinutes} min
                 </dd>
               </div>
