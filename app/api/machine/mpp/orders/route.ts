@@ -6,7 +6,6 @@ import {
   createMppCheckout,
   quoteCheckout,
 } from "@/lib/checkout";
-import { product } from "@/lib/config";
 import { deriveOrderId, serviceUrlFromRequest } from "@/lib/orders";
 import { toMppOrder } from "@/lib/models";
 import { createMachineService } from "@/lib/service";
@@ -34,10 +33,10 @@ export async function POST(request: Request) {
     }
 
     const payload = await request.clone().json();
-    const createRequest = parseCreateMachineRequest(payload, product, { requireRequestId: true });
+    const createRequest = parseCreateMachineRequest(payload, { requireRequestId: true });
     const orderId = deriveOrderId(createRequest.requestId!);
     const serviceUrl = serviceUrlFromRequest(request);
-    const service = createMachineService();
+    const service = createMachineService(createRequest.productId);
 
     const log = (event: string, extra: Record<string, unknown> = {}) =>
       console.log(JSON.stringify({ event, order_id: orderId, request_id: createRequest.requestId, ...extra }));

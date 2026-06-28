@@ -24,6 +24,7 @@ describe("mpp orders validate", () => {
     const response = await validatePost(
       post("/api/machine/mpp/orders/validate", {
         request_id: UUID,
+        product_id: "bare-linux-machine",
         duration_minutes: 60,
         ssh_public_key: VALID_KEY,
       }),
@@ -32,7 +33,7 @@ describe("mpp orders validate", () => {
       protocol: string;
       methods: string[];
       product_type: string;
-      quote: { amount_cents: number };
+      quote: { amount_cents: number; product_id: string };
       request_id: string;
     };
 
@@ -41,18 +42,57 @@ describe("mpp orders validate", () => {
     assert.deepEqual(body.methods, ["stripe_spt"]);
     assert.equal(body.product_type, "machine_lease");
     assert.equal(body.request_id, UUID);
+    assert.equal(body.quote.product_id, "bare-linux-machine");
     assert.equal(typeof body.quote.amount_cents, "number");
+  });
+
+  it("quotes the GPU product when selected", async () => {
+    const response = await validatePost(
+      post("/api/machine/mpp/orders/validate", {
+        request_id: UUID,
+        product_id: "gpu-h100-machine",
+        duration_minutes: 60,
+        ssh_public_key: VALID_KEY,
+      }),
+    );
+    const body = (await response.json()) as { quote: { product_id: string; unit_price_cents_per_minute: number } };
+
+    assert.equal(response.status, 200);
+    assert.equal(body.quote.product_id, "gpu-h100-machine");
+    assert.ok(body.quote.unit_price_cents_per_minute > 0);
+  });
+
+  it("rejects a missing or unknown product_id", async () => {
+    const missing = await validatePost(
+      post("/api/machine/mpp/orders/validate", { request_id: UUID, duration_minutes: 60, ssh_public_key: VALID_KEY }),
+    );
+    assert.equal(missing.status, 400);
+
+    const unknown = await validatePost(
+      post("/api/machine/mpp/orders/validate", {
+        request_id: UUID,
+        product_id: "gpu-a100-machine",
+        duration_minutes: 60,
+        ssh_public_key: VALID_KEY,
+      }),
+    );
+    assert.equal(unknown.status, 400);
   });
 
   it("requires a UUID request_id", async () => {
     const missing = await validatePost(
-      post("/api/machine/mpp/orders/validate", { duration_minutes: 60, ssh_public_key: VALID_KEY }),
+      post("/api/machine/mpp/orders/validate", {
+        product_id: "bare-linux-machine",
+        duration_minutes: 60,
+        ssh_public_key: VALID_KEY,
+      }),
     );
     assert.equal(missing.status, 400);
 
     const notUuid = await validatePost(
       post("/api/machine/mpp/orders/validate", {
         request_id: "ord-123",
+        product_id: "bare-linux-machine",
         duration_minutes: 60,
         ssh_public_key: VALID_KEY,
       }),
@@ -61,7 +101,12 @@ describe("mpp orders validate", () => {
   });
 
   it("validateOrder is pure — no Stripe config required", () => {
-    const result = validateOrder({ request_id: UUID, duration_minutes: 60, ssh_public_key: VALID_KEY });
+    const result = validateOrder({
+      request_id: UUID,
+      product_id: "bare-linux-machine",
+      duration_minutes: 60,
+      ssh_public_key: VALID_KEY,
+    });
     assert.equal(result.protocol, "mpp");
     assert.equal(result.request_id, UUID);
   });
@@ -70,7 +115,11 @@ describe("mpp orders validate", () => {
 describe("mpp orders create", () => {
   it("rejects a missing request_id before touching payment", async () => {
     const response = await ordersPost(
-      post("/api/machine/mpp/orders", { duration_minutes: 60, ssh_public_key: VALID_KEY }),
+      post("/api/machine/mpp/orders", {
+        product_id: "bare-linux-machine",
+        duration_minutes: 60,
+        ssh_public_key: VALID_KEY,
+      }),
     );
     assert.equal(response.status, 400);
   });
@@ -80,7 +129,12 @@ describe("mpp orders create", () => {
     // createMppCheckout because no live Stripe credentials are set in tests.
     // Proves the request is well-formed and the challenge path is exercised.
     const response = await ordersPost(
-      post("/api/machine/mpp/orders", { request_id: UUID, duration_minutes: 60, ssh_public_key: VALID_KEY }),
+      post("/api/machine/mpp/orders", {
+        request_id: UUID,
+        product_id: "bare-linux-machine",
+        duration_minutes: 60,
+        ssh_public_key: VALID_KEY,
+      }),
     );
     assert.equal(response.status, 503);
   });
@@ -103,29 +157,34 @@ describe("order identity and binding", () => {
   });
 
   it("binds the digest to ssh_public_key — same price, different key differs", () => {
-    const base = { durationMinutes: 60, sshPublicKey: VALID_KEY, requestId: UUID };
-    const other = { durationMinutes: 60, sshPublicKey: `${VALID_KEY}-2`, requestId: UUID };
+    const base = { productId: product.id, durationMinutes: 60, sshPublicKey: VALID_KEY, requestId: UUID } as const;
+    const other = { ...base, sshPublicKey: `${VALID_KEY}-2` };
     assert.notEqual(orderDigest(base), orderDigest(other));
   });
 
+  it("binds the digest to product_id — same body, different product differs", () => {
+    const cpu = { productId: "bare-linux-machine", durationMinutes: 60, sshPublicKey: VALID_KEY, requestId: UUID } as const;
+    const gpu = { ...cpu, productId: "gpu-h100-machine" } as const;
+    assert.notEqual(orderDigest(cpu), orderDigest(gpu));
+  });
+
   it("is stable for an identical order so the paid retry reproduces the challenge", () => {
-    const order = { durationMinutes: 60, sshPublicKey: VALID_KEY, requestId: UUID };
+    const order = { productId: product.id, durationMinutes: 60, sshPublicKey: VALID_KEY, requestId: UUID } as const;
     assert.equal(orderDigest(order), orderDigest({ ...order }));
   });
 
   it("parses and requires a UUID request_id on the order path", () => {
     const parsed = parseCreateMachineRequest(
-      { request_id: UUID, duration_minutes: 60, ssh_public_key: VALID_KEY },
-      product,
+      { request_id: UUID, product_id: product.id, duration_minutes: 60, ssh_public_key: VALID_KEY },
       { requireRequestId: true },
     );
     assert.equal(parsed.requestId, UUID);
+    assert.equal(parsed.productId, product.id);
 
     assert.throws(
       () =>
         parseCreateMachineRequest(
-          { duration_minutes: 60, ssh_public_key: VALID_KEY },
-          product,
+          { product_id: product.id, duration_minutes: 60, ssh_public_key: VALID_KEY },
           { requireRequestId: true },
         ),
       ValidationError,

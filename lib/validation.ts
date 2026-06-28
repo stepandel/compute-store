@@ -1,4 +1,4 @@
-import type { Product } from "@/lib/config";
+import { getProduct, isProductId, PRODUCT_IDS } from "@/lib/config";
 import type { CreateMachineRequest } from "@/lib/models";
 
 const SSH_PUBLIC_KEY_RE =
@@ -25,7 +25,6 @@ export class ValidationError extends Error {}
 
 export function parseCreateMachineRequest(
   payload: unknown,
-  product: Product,
   options: ParseCreateOptions = {},
 ): CreateMachineRequest {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
@@ -33,6 +32,8 @@ export function parseCreateMachineRequest(
   }
 
   const body = payload as Record<string, unknown>;
+  const productId = parseProductId(body.product_id);
+  const product = getProduct(productId);
   const duration = body.duration_minutes;
   const sshPublicKey = body.ssh_public_key;
   const requestId = parseRequestId(body.request_id, options.requireRequestId ?? false);
@@ -42,7 +43,7 @@ export function parseCreateMachineRequest(
   }
   if (duration < product.minDurationMinutes || duration > product.maxDurationMinutes) {
     throw new ValidationError(
-      `duration_minutes must be between ${product.minDurationMinutes} and ${product.maxDurationMinutes}.`,
+      `duration_minutes must be between ${product.minDurationMinutes} and ${product.maxDurationMinutes} for ${product.id}.`,
     );
   }
   if (typeof sshPublicKey !== "string") {
@@ -57,10 +58,21 @@ export function parseCreateMachineRequest(
   }
 
   return {
+    productId,
     durationMinutes: duration,
     sshPublicKey: sshPublicKey.trim(),
     ...(requestId !== undefined ? { requestId } : {}),
   };
+}
+
+function parseProductId(value: unknown): CreateMachineRequest["productId"] {
+  if (value === undefined || value === null || (typeof value === "string" && value.trim().length === 0)) {
+    throw new ValidationError(`product_id is required. Supported products: ${PRODUCT_IDS.join(", ")}.`);
+  }
+  if (!isProductId(typeof value === "string" ? value.trim() : value)) {
+    throw new ValidationError(`Unknown product_id. Supported products: ${PRODUCT_IDS.join(", ")}.`);
+  }
+  return (value as string).trim() as CreateMachineRequest["productId"];
 }
 
 function parseRequestId(value: unknown, required: boolean): string | undefined {

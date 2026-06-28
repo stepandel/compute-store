@@ -1,6 +1,5 @@
 import { createHash } from "node:crypto";
 import { checkoutMethods, quoteCheckout, type CheckoutQuote } from "@/lib/checkout";
-import { product } from "@/lib/config";
 import { parseCreateMachineRequest } from "@/lib/validation";
 
 // Our MPP product type, surfaced by the validate endpoint (PostalForm returns
@@ -31,7 +30,7 @@ export type ValidateOrderResult = {
 // Requires a UUID request_id (MPP order flow). Throws ValidationError on a bad
 // body. Pure — composes no payment and creates no machine.
 export function validateOrder(payload: unknown): ValidateOrderResult {
-  const request = parseCreateMachineRequest(payload, product, { requireRequestId: true });
+  const request = parseCreateMachineRequest(payload, { requireRequestId: true });
   return {
     protocol: "mpp",
     methods: checkoutMethods(),

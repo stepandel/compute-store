@@ -1,6 +1,13 @@
 import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
-import { loadSettings, type Product, type ProviderName } from "@/lib/config";
-import { buildProvider, type ComputeProvider } from "@/lib/providers";
+import {
+  DEFAULT_PRODUCT_ID,
+  getProduct,
+  loadSettings,
+  type Product,
+  type ProductId,
+  type ProviderName,
+} from "@/lib/config";
+import { buildProvider, buildProviderForLease, type ComputeProvider } from "@/lib/providers";
 import type {
   CapabilityAction,
   CreateMachineRequest,
@@ -39,6 +46,10 @@ export class MachineService {
     private readonly provider: ComputeProvider,
     private readonly product: Product,
     private readonly providerName: ProviderName,
+    // Resolves the right provider for an existing lease during cross-product
+    // lifecycle ops (terminate, expiry reap). Defaults to the primary provider,
+    // which is correct in dry-run mode and for single-product callers/tests.
+    private readonly resolveProvider: (lease: MachineLease) => ComputeProvider = () => provider,
   ) {}
 
   async createMachine(request: CreateMachineRequest, orderId: string | null = null): Promise<CreatedMachine> {
@@ -53,6 +64,7 @@ export class MachineService {
       status: "provisioning",
       sshPublicKey: request.sshPublicKey,
       host: null,
+      sshPort: null,
       username: this.product.username,
       createdAt: now.toISOString(),
       expiresAt: new Date(now.getTime() + request.durationMinutes * 60_000).toISOString(),
@@ -104,12 +116,15 @@ export class MachineService {
       throw new Error(`Cannot extend a machine with status ${lease.status}.`);
     }
 
+    // Cap by the lease's OWN product, not the service's default — a management
+    // service is built without knowing which SKU the lease belongs to.
+    const leaseProduct = getProduct(lease.productId as ProductId);
     const createdAt = Date.parse(lease.createdAt);
     const currentExpiry = Date.parse(lease.expiresAt);
     const requestedExpiry = currentExpiry + additionalMinutes * 60_000;
-    const maxExpiry = createdAt + this.product.maxDurationMinutes * 60_000;
+    const maxExpiry = createdAt + leaseProduct.maxDurationMinutes * 60_000;
     if (requestedExpiry > maxExpiry) {
-      throw new Error(`Lease cannot exceed ${this.product.maxDurationMinutes} total minutes.`);
+      throw new Error(`Lease cannot exceed ${leaseProduct.maxDurationMinutes} total minutes.`);
     }
 
     await this.store.extendLease(id, new Date(requestedExpiry).toISOString());
@@ -149,7 +164,7 @@ export class MachineService {
     }
 
     try {
-      await this.provider.terminate(lease);
+      await this.resolveProvider(lease).terminate(lease);
       await this.store.markTerminated(id);
     } catch (error) {
       // Keep the provider detail in server logs; expose only a generic reason.
@@ -178,7 +193,7 @@ export class MachineService {
     );
     for (const lease of stuck) {
       try {
-        await this.provider.terminate(lease);
+        await this.resolveProvider(lease).terminate(lease);
       } catch {
         // Best effort: still mark the lease failed below.
       }
@@ -215,6 +230,7 @@ export class MachineService {
         machine.username,
         machine.providerSshKeyId,
         machine.providerFirewallId,
+        machine.sshPort ?? null,
       );
     } catch (error) {
       // Keep the provider detail in server logs; expose only a generic reason
@@ -267,15 +283,20 @@ export class MachineService {
   }
 }
 
-export function createMachineService() {
+// Build the service for a given product. Lifecycle/management routes call this
+// with the default product but operate across SKUs: the per-lease resolver
+// rebuilds the correct backend from each lease, so termination/expiry of a GPU
+// lease works even on a CPU-default service.
+export function createMachineService(productId: ProductId = DEFAULT_PRODUCT_ID) {
   const settings = loadSettings();
-  return new MachineService(
+  const product = getProduct(productId);
+  const store =
     settings.leaseStore === "redis-rest"
       ? new RedisRestLeaseStore(settings.redisRestUrl!, settings.redisRestToken!, settings.redisRestKey)
-      : new FileLeaseStore(settings.dataPath),
-    buildProvider(settings),
-    settings.product,
-    settings.provider,
+      : new FileLeaseStore(settings.dataPath);
+  const { provider, providerName } = buildProvider(settings, product);
+  return new MachineService(store, provider, product, providerName, (lease) =>
+    buildProviderForLease(settings, lease),
   );
 }
 

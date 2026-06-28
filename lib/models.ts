@@ -1,7 +1,11 @@
+import type { ProductId } from "@/lib/config";
+
 export type MachineStatus = "provisioning" | "active" | "terminating" | "terminated" | "failed";
 export type CapabilityAction = "read" | "extend" | "terminate";
 
 export type CreateMachineRequest = {
+  // Which product to lease. Required: the buyer must pick a SKU.
+  productId: ProductId;
   durationMinutes: number;
   sshPublicKey: string;
   // Optional client-supplied correlation id. Reused verbatim across the
@@ -16,6 +20,9 @@ export type ProvisionedMachine = {
   providerFirewallId?: string;
   host: string;
   username: string;
+  // Non-standard SSH port, when the backend does not expose 22 directly
+  // (e.g. RunPod maps SSH to a forwarded TCP port). Omitted means port 22.
+  sshPort?: number;
 };
 
 export type MachineLease = {
@@ -28,6 +35,7 @@ export type MachineLease = {
   status: MachineStatus;
   sshPublicKey: string;
   host: string | null;
+  sshPort: number | null;
   username: string;
   createdAt: string;
   expiresAt: string;
@@ -139,7 +147,8 @@ export function toPublicMachine(lease: MachineLease, management?: MachineManagem
   };
 
   if (lease.host && lease.status === "active") {
-    body.ssh_command = `ssh ${lease.username}@${lease.host}`;
+    const portFlag = lease.sshPort && lease.sshPort !== 22 ? ` -p ${lease.sshPort}` : "";
+    body.ssh_command = `ssh ${lease.username}@${lease.host}${portFlag}`;
   }
   if (lease.terminatedAt) {
     body.terminated_at = lease.terminatedAt;

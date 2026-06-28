@@ -1,6 +1,6 @@
 import { headers } from "next/headers";
 
-import { product } from "@/lib/config";
+import { getProducts } from "@/lib/config";
 import { CopyButton } from "./CopyButton";
 import { ClaudeLogo, CodexLogo, HermesLogo, OpenClawLogo } from "./logos";
 
@@ -33,16 +33,22 @@ async function resolveBaseUrl(): Promise<string> {
 
 export default async function Home() {
   const baseUrl = await resolveBaseUrl();
-  const baseFee = formatCents(Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99));
-  const perMinute = formatCents(Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5));
+  const products = Object.values(getProducts());
+  const cpu = products.find((entry) => entry.id === "bare-linux-machine") ?? products[0];
 
   const agentPrompt = [
     `You have access to an agentic compute storefront at ${baseUrl}.`,
-    `It leases temporary bare ${product.image} Linux machines with SSH access, billed per minute.`,
+    `It leases temporary machines with SSH access, billed per minute. Two products:`,
+    ...products.map(
+      (entry) =>
+        `  - ${entry.id}: ${entry.label}, $${formatCents(entry.baseFeeCents)} + $${formatCents(
+          entry.priceCentsPerMinute,
+        )}/min.`,
+    ),
     "",
     `1. Read ${baseUrl}/llms.txt for the full machine-readable instructions.`,
-    `2. To buy, POST ${baseUrl}/api/machine/mpp/orders with JSON:`,
-    `   {"request_id": "<uuid>", "duration_minutes": 60, "ssh_public_key": "<your ssh public key>"}`,
+    `2. To buy, POST ${baseUrl}/api/machine/mpp/orders with JSON (product_id is required):`,
+    `   {"request_id": "<uuid>", "product_id": "${cpu.id}", "duration_minutes": 60, "ssh_public_key": "<your ssh public key>"}`,
     "3. You will get an HTTP 402 with an MPP payment challenge. Pay it with the",
     "   Stripe Link CLI (preferred) and retry the same request.",
     "4. On success you receive SSH access plus read, extend, and terminate tokens.",
@@ -92,26 +98,15 @@ export default async function Home() {
             </li>
           </ol>
           <dl className="terms">
-            <div>
-              <dt>Lease</dt>
-              <dd>
-                {product.minDurationMinutes}–{product.maxDurationMinutes} min
-              </dd>
-            </div>
-            <div>
-              <dt>Price</dt>
-              <dd>
-                {baseFee} + {perMinute}/min
-              </dd>
-            </div>
-            <div>
-              <dt>Image</dt>
-              <dd>{product.image}</dd>
-            </div>
-            <div>
-              <dt>Region</dt>
-              <dd>{product.location}</dd>
-            </div>
+            {products.map((entry) => (
+              <div key={entry.id}>
+                <dt>{entry.label}</dt>
+                <dd>
+                  ${formatCents(entry.baseFeeCents)} + ${formatCents(entry.priceCentsPerMinute)}/min ·{" "}
+                  {entry.minDurationMinutes}–{entry.maxDurationMinutes} min
+                </dd>
+              </div>
+            ))}
           </dl>
         </section>
 

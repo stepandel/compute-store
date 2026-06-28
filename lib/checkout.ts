@@ -1,7 +1,7 @@
 import Stripe from "stripe";
 import { BodyDigest } from "mppx";
 import { Mppx, stripe as mppStripe } from "mppx/server";
-import { loadSettings, type CheckoutSettings } from "@/lib/config";
+import { getProduct, loadSettings, type CheckoutSettings } from "@/lib/config";
 import type { CreateMachineRequest } from "@/lib/models";
 
 const TEN_MINUTES_MS = 10 * 60 * 1000;
@@ -36,13 +36,14 @@ export function checkoutMethods(): string[] {
 
 export function quoteCheckout(request: CreateMachineRequest): CheckoutQuote {
   const settings = loadSettings();
-  const amountCents = settings.checkout.baseFeeCents + request.durationMinutes * settings.checkout.priceCentsPerMinute;
+  const product = getProduct(request.productId);
+  const amountCents = product.baseFeeCents + request.durationMinutes * product.priceCentsPerMinute;
 
   return {
-    product_id: settings.product.id,
+    product_id: product.id,
     duration_minutes: request.durationMinutes,
-    base_fee_cents: settings.checkout.baseFeeCents,
-    unit_price_cents_per_minute: settings.checkout.priceCentsPerMinute,
+    base_fee_cents: product.baseFeeCents,
+    unit_price_cents_per_minute: product.priceCentsPerMinute,
     amount_cents: amountCents,
     amount: formatUsdAmount(amountCents),
     currency: settings.checkout.currency,
@@ -98,6 +99,7 @@ export function checkoutComposeEntries(
 // on the paid retry, which is already required for the amount to match.
 export function orderDigest(request: CreateMachineRequest): string {
   return BodyDigest.compute({
+    product_id: request.productId,
     duration_minutes: request.durationMinutes,
     ssh_public_key: request.sshPublicKey,
     request_id: request.requestId ?? "",

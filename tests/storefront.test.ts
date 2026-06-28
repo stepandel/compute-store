@@ -29,17 +29,27 @@ describe("compute storefront", () => {
     await rm(tempDir, { recursive: true, force: true });
   });
 
-  it("validates the single-product request", () => {
-    const request = parseCreateMachineRequest(
-      {
-        duration_minutes: 60,
-        ssh_public_key: VALID_KEY,
-      },
-      product,
-    );
+  it("validates a product request", () => {
+    const request = parseCreateMachineRequest({
+      product_id: product.id,
+      duration_minutes: 60,
+      ssh_public_key: VALID_KEY,
+    });
 
+    assert.equal(request.productId, product.id);
     assert.equal(request.durationMinutes, 60);
     assert.equal(request.sshPublicKey, VALID_KEY);
+  });
+
+  it("requires a known product_id", () => {
+    assert.throws(
+      () => parseCreateMachineRequest({ duration_minutes: 60, ssh_public_key: VALID_KEY }),
+      ValidationError,
+    );
+    assert.throws(
+      () => parseCreateMachineRequest({ product_id: "nope", duration_minutes: 60, ssh_public_key: VALID_KEY }),
+      ValidationError,
+    );
   });
 
   it("prices checkout by requested lease duration", () => {
@@ -50,11 +60,13 @@ describe("compute storefront", () => {
 
     try {
       const quote = quoteCheckout({
+        productId: "bare-linux-machine",
         durationMinutes: 60,
         sshPublicKey: VALID_KEY,
       });
 
       assert.equal(quote.currency, "usd");
+      assert.equal(quote.product_id, "bare-linux-machine");
       assert.equal(quote.base_fee_cents, 99);
       assert.equal(quote.unit_price_cents_per_minute, 5);
       assert.equal(quote.amount_cents, 399);
@@ -65,16 +77,43 @@ describe("compute storefront", () => {
     }
   });
 
+  it("prices the GPU product higher than the CPU product per minute", () => {
+    const originalGpuBase = process.env.GPU_CHECKOUT_BASE_FEE_CENTS;
+    const originalGpuMinute = process.env.GPU_PRICE_CENTS_PER_MINUTE;
+    delete process.env.GPU_CHECKOUT_BASE_FEE_CENTS;
+    delete process.env.GPU_PRICE_CENTS_PER_MINUTE;
+
+    try {
+      const gpu = quoteCheckout({
+        productId: "gpu-h100-machine",
+        durationMinutes: 60,
+        sshPublicKey: VALID_KEY,
+      });
+      const cpu = quoteCheckout({
+        productId: "bare-linux-machine",
+        durationMinutes: 60,
+        sshPublicKey: VALID_KEY,
+      });
+
+      assert.equal(gpu.product_id, "gpu-h100-machine");
+      assert.equal(gpu.base_fee_cents, 199);
+      assert.equal(gpu.unit_price_cents_per_minute, 9);
+      assert.equal(gpu.amount_cents, 199 + 60 * 9);
+      assert.ok(gpu.unit_price_cents_per_minute > cpu.unit_price_cents_per_minute);
+    } finally {
+      restoreEnv("GPU_CHECKOUT_BASE_FEE_CENTS", originalGpuBase);
+      restoreEnv("GPU_PRICE_CENTS_PER_MINUTE", originalGpuMinute);
+    }
+  });
+
   it("rejects oversized SSH public keys", () => {
     assert.throws(
       () =>
-        parseCreateMachineRequest(
-          {
-            duration_minutes: 60,
-            ssh_public_key: `ssh-ed25519 ${"A".repeat(9000)}`,
-          },
-          product,
-        ),
+        parseCreateMachineRequest({
+          product_id: product.id,
+          duration_minutes: 60,
+          ssh_public_key: `ssh-ed25519 ${"A".repeat(9000)}`,
+        }),
       ValidationError,
     );
   });
@@ -82,19 +121,18 @@ describe("compute storefront", () => {
   it("rejects durations outside policy", () => {
     assert.throws(
       () =>
-        parseCreateMachineRequest(
-          {
-            duration_minutes: 1,
-            ssh_public_key: VALID_KEY,
-          },
-          product,
-        ),
+        parseCreateMachineRequest({
+          product_id: product.id,
+          duration_minutes: 1,
+          ssh_public_key: VALID_KEY,
+        }),
       ValidationError,
     );
   });
 
   it("returns a provisioning lease with tokens before provisioning runs", async () => {
     const { lease, management } = await service.createMachine({
+      productId: product.id,
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
@@ -110,6 +148,7 @@ describe("compute storefront", () => {
 
   it("creates a machine that becomes active once provisioned", async () => {
     const { lease, management } = await service.createMachine({
+      productId: product.id,
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
@@ -125,6 +164,7 @@ describe("compute storefront", () => {
 
   it("fails leases stuck in provisioning past the timeout", async () => {
     const { lease, management } = await service.createMachine({
+      productId: product.id,
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
@@ -141,6 +181,7 @@ describe("compute storefront", () => {
 
   it("requires the right capability token to read a machine", async () => {
     const { lease, management } = await service.createMachine({
+      productId: product.id,
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
@@ -165,6 +206,7 @@ describe("compute storefront", () => {
 
   it("never terminates a machine without a token (no empty-token bypass)", async () => {
     const { lease, management } = await service.createMachine({
+      productId: product.id,
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
@@ -180,6 +222,7 @@ describe("compute storefront", () => {
 
   it("prunes retired leases and their tokens after the retention window", async () => {
     const { lease, management } = await service.createMachine({
+      productId: product.id,
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
@@ -196,6 +239,7 @@ describe("compute storefront", () => {
 
   it("terminates a machine", async () => {
     const { lease, management } = await service.createMachine({
+      productId: product.id,
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
@@ -212,6 +256,7 @@ describe("compute storefront", () => {
 
   it("extends a machine with the extend capability token", async () => {
     const { lease, management } = await service.createMachine({
+      productId: product.id,
       durationMinutes: 60,
       sshPublicKey: VALID_KEY,
     });
@@ -237,6 +282,7 @@ describe("compute storefront", () => {
       status: "active",
       sshPublicKey: VALID_KEY,
       host: "203.0.113.10",
+      sshPort: null,
       username: "root",
       createdAt: new Date(now.getTime() - 7_200_000).toISOString(),
       expiresAt: new Date(now.getTime() - 3_600_000).toISOString(),

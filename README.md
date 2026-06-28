@@ -1,17 +1,20 @@
 # Agentic Compute Storefront
 
-A small Next.js + TypeScript storefront for leasing one product: a temporary bare Linux machine.
+A small Next.js + TypeScript storefront for leasing temporary compute to agents.
 
 The app is intentionally narrow:
 
-- One product: `bare-linux-machine`
-- One request shape: duration plus SSH public key
+- Two products, selected with a required `product_id`:
+  - `bare-linux-machine` — a temporary bare Linux VM (Hetzner Cloud)
+  - `gpu-h100-machine` — a temporary single-GPU NVIDIA H100 machine (RunPod)
+- One request shape: `product_id` plus duration plus SSH public key
 - One paid checkout flow: MPP `402 Payment Required`, then provision after payment
 - One lifecycle: create, poll, extend, terminate, expire
+- Per-product pricing: flat base fee + per-minute rate (GPU priced higher)
 - Resource-scoped lease capability tokens for management
 - One local persistence layer: JSON file storage
-- One safe default provider: dry-run, which simulates provisioning
-- Optional real provider: Hetzner Cloud, enabled explicitly with env vars
+- One safe default mode: dry-run, which simulates provisioning for every product
+- Optional live provisioning: Hetzner (CPU) and RunPod (GPU), enabled explicitly with env vars
 
 ## Run
 
@@ -34,9 +37,15 @@ MPP_SECRET_KEY=replace-with-random-base64-secret
 STRIPE_SECRET_KEY=sk_live_...
 STRIPE_PROFILE_ID=profile_...
 STRIPE_PAYMENT_METHOD_TYPES=card,link
+# bare-linux-machine pricing
 CHECKOUT_BASE_FEE_CENTS=99
 PRICE_CENTS_PER_MINUTE=5
+# gpu-h100-machine pricing (higher than CPU)
+GPU_CHECKOUT_BASE_FEE_CENTS=199
+GPU_PRICE_CENTS_PER_MINUTE=9
 ```
+
+`PROVIDER=dry-run` (default) simulates provisioning for every product. `PROVIDER=live` provisions each product on its own backend — `bare-linux-machine` on Hetzner, `gpu-h100-machine` on RunPod — and requires the corresponding API token (`HETZNER_API_TOKEN`, `RUNPOD_API_TOKEN`) for whichever products are purchased.
 
 For Vercel or any serverless deployment that provisions real infrastructure, use durable storage instead of the local JSON file:
 
@@ -55,9 +64,9 @@ Generate `MPP_SECRET_KEY` with:
 openssl rand -base64 32
 ```
 
-Paid checkout is exposed at `POST /api/machine/mpp/orders`, modeled on PostalForm's machine MPP endpoints. Submit the order details with a UUID `request_id`, receive an HTTP `402` payment challenge (plus `{ order_id, status: "unpaid" }`) if no credential is present, retry the identical body with a live Stripe-backed MPP payment credential, and then receive the settled order and fulfilled machine. A preflight `POST /api/machine/mpp/orders/validate` returns the quote and accepted methods without composing payment, and `GET /api/machine/mpp/orders/{order_id}` polls payment status.
+Paid checkout is exposed at `POST /api/machine/mpp/orders`, modeled on PostalForm's machine MPP endpoints. Submit the order details with a required `product_id` and a UUID `request_id`, receive an HTTP `402` payment challenge (plus `{ order_id, status: "unpaid" }`) if no credential is present, retry the identical body with a live Stripe-backed MPP payment credential, and then receive the settled order and fulfilled machine. A preflight `POST /api/machine/mpp/orders/validate` returns the quote and accepted methods without composing payment, and `GET /api/machine/mpp/orders/{order_id}` polls payment status.
 
-`request_id` is the idempotency key: reuse the same UUID (with an otherwise identical body) across validate, create, and the paid retry. It deterministically derives `order_id`, so a retried paid call resolves to the existing lease instead of provisioning a second machine.
+`product_id` selects the SKU and is **required** on every order/validate body (supported values: `bare-linux-machine`, `gpu-h100-machine`); pricing and duration bounds are per product. `request_id` is the idempotency key: reuse the same UUID (with an otherwise identical body) across validate, create, and the paid retry. It deterministically derives `order_id`, so a retried paid call resolves to the existing lease instead of provisioning a second machine. `product_id` is also folded into the order digest, so a credential minted for one product cannot be replayed to claim another.
 
 For Stripe SPT/card-style MPP payments, create a live Stripe profile in the Dashboard and set `STRIPE_PROFILE_ID` to the `profile_...` value. Use a matching live `STRIPE_SECRET_KEY=sk_live_...`. Test-mode Stripe keys and sandbox payment tokens are rejected by production checkout. The default accepted SPT-backed payment methods are `card,link`.
 
@@ -84,25 +93,28 @@ npx @stripe/link-cli mpp pay http://localhost:3000/api/machine/mpp/orders \
   --spend-request-id <approved_spend_request_id> \
   --method POST \
   --header 'Content-Type: application/json' \
-  --data '{"request_id":"<uuid>","duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}'
+  --data '{"request_id":"<uuid>","product_id":"bare-linux-machine","duration_minutes":60,"ssh_public_key":"ssh-ed25519 ..."}'
 ```
+
+For the GPU SKU, set `"product_id":"gpu-h100-machine"` and match the `--amount`/`--line-item`/`--total` to that product's quote (read it from the preflight `validate` response).
 
 Any MPP client that can create a Stripe SPT for the advertised challenge and retry with `Authorization: Payment ...` should work. Link CLI virtual cards and manual card entry are not supported because this storefront exposes an agentic MPP endpoint, not a browser card checkout form. Crypto MPP is intentionally not accepted.
 
 Checkout is subject to [acceptable use](ACCEPTABLE_USE.md), also served for live agents at `/acceptable-use`. Machines are for lawful, authorized development, automation, testing, debugging, and compute tasks. Do not use leased machines for spam, phishing, unauthorized scanning or exploitation, denial-of-service activity, malware, botnets, cryptojacking, cryptocurrency mining, illegal content, sanctions evasion, or platform safety bypasses.
 
-To use Hetzner for real provisioning:
+To enable real provisioning, set `PROVIDER=live`. Each product is then routed to its own backend, and you only need the token(s) for the product(s) you actually sell:
 
 ```bash
-PROVIDER=hetzner
-HETZNER_API_TOKEN=...
+PROVIDER=live
+HETZNER_API_TOKEN=...   # for bare-linux-machine
+RUNPOD_API_TOKEN=...    # for gpu-h100-machine
 LEASE_STORE=redis-rest
 REDIS_REST_URL=...
 REDIS_REST_TOKEN=...
 bun run dev
 ```
 
-The Hetzner adapter is configured for a small EU Ubuntu machine:
+The Hetzner adapter (`bare-linux-machine`) is configured for a small EU Ubuntu machine:
 
 - Server type: `cx23`
 - Image: `ubuntu-24.04`
@@ -110,7 +122,15 @@ The Hetzner adapter is configured for a small EU Ubuntu machine:
 - Access: the provided SSH public key is attached at provision time
 - Network hardening: each lease gets a Hetzner Cloud Firewall allowing inbound TCP/22 from IPv4/IPv6 and denying other inbound traffic
 
-Provisioning is completed before checkout returns. If Hetzner creation fails after a partial resource was created, the app attempts to clean up the server, SSH key, and firewall before marking the lease failed.
+The RunPod adapter (`gpu-h100-machine`) provisions a single-GPU NVIDIA H100 pod:
+
+- GPU type: `NVIDIA H100 80GB HBM3`, one GPU per lease
+- Image: a CUDA/PyTorch base image (overridable)
+- Access: the provided SSH public key is passed as the pod's `PUBLIC_KEY`, which the RunPod images install into `authorized_keys`
+- SSH: reached over the pod's public IP on a forwarded TCP port (the lease and `ssh_command` carry the non-22 port)
+- On a partial/failed create, the app attempts to delete the pod before marking the lease failed
+
+Hetzner provisioning completes before checkout returns; RunPod provisioning runs in the background after the paid 202 (poll the machine with the read token until `status` is `active`). On partial failure each adapter attempts to clean up the resources it created before marking the lease failed.
 
 ## API
 
@@ -129,6 +149,7 @@ curl -s http://localhost:3000/api/machine/mpp/orders/validate \
   -H 'content-type: application/json' \
   -d '{
     "request_id": "11111111-1111-4111-8111-111111111111",
+    "product_id": "bare-linux-machine",
     "duration_minutes": 60,
     "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey user@example"
   }'
@@ -141,6 +162,7 @@ curl -i http://localhost:3000/api/machine/mpp/orders \
   -H 'content-type: application/json' \
   -d '{
     "request_id": "11111111-1111-4111-8111-111111111111",
+    "product_id": "bare-linux-machine",
     "duration_minutes": 60,
     "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey user@example"
   }'
@@ -179,6 +201,7 @@ The unpaid local/dev provisioning endpoint is disabled by default, including in 
 curl -s http://localhost:3000/api/machines \
   -H 'content-type: application/json' \
   -d '{
+    "product_id": "bare-linux-machine",
     "duration_minutes": 60,
     "ssh_public_key": "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey user@example"
   }'

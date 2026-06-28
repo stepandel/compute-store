@@ -21,6 +21,7 @@ export interface LeaseStoreBackend {
     username: string,
     providerSshKeyId?: string,
     providerFirewallId?: string,
+    sshPort?: number | null,
   ): Promise<void>;
   markFailed(id: string, reason: string): Promise<void>;
   markTerminating(id: string): Promise<MachineLease | null>;
@@ -98,6 +99,7 @@ export class FileLeaseStore implements LeaseStoreBackend {
     username: string,
     providerSshKeyId?: string,
     providerFirewallId?: string,
+    sshPort?: number | null,
   ) {
     await this.patch(id, {
       status: "active",
@@ -105,6 +107,7 @@ export class FileLeaseStore implements LeaseStoreBackend {
       providerSshKeyId: providerSshKeyId ?? null,
       providerFirewallId: providerFirewallId ?? null,
       host,
+      sshPort: sshPort ?? null,
       username,
       failureReason: null,
     });
@@ -247,6 +250,7 @@ export class RedisRestLeaseStore implements LeaseStoreBackend {
     username: string,
     providerSshKeyId?: string,
     providerFirewallId?: string,
+    sshPort?: number | null,
   ) {
     await this.patch(id, {
       status: "active",
@@ -254,6 +258,7 @@ export class RedisRestLeaseStore implements LeaseStoreBackend {
       providerSshKeyId: providerSshKeyId ?? null,
       providerFirewallId: providerFirewallId ?? null,
       host,
+      sshPort: sshPort ?? null,
       username,
       failureReason: null,
     });

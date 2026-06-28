@@ -1,6 +1,6 @@
 import { NextResponse, after } from "next/server";
 import { createMachineService } from "@/lib/service";
-import { loadSettings, product } from "@/lib/config";
+import { loadSettings } from "@/lib/config";
 import { toPublicMachine } from "@/lib/models";
 import { parseCreateMachineRequest, ValidationError } from "@/lib/validation";
 import { enforceRateLimit } from "@/lib/ratelimit";
@@ -23,8 +23,8 @@ export async function POST(request: Request) {
     }
 
     const payload = await request.json();
-    const createRequest = parseCreateMachineRequest(payload, product);
-    const service = createMachineService();
+    const createRequest = parseCreateMachineRequest(payload);
+    const service = createMachineService(createRequest.productId);
     const created = await service.createMachine(createRequest);
     after(() => service.provisionMachine(created.lease.id));
     return NextResponse.json(toPublicMachine(created.lease, created.management), { status: 202 });

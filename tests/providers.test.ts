@@ -1,8 +1,8 @@
 import { afterEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { product } from "@/lib/config";
+import { getProduct, product } from "@/lib/config";
 import type { MachineLease } from "@/lib/models";
-import { HetznerProvider } from "@/lib/providers";
+import { HetznerProvider, RunpodProvider } from "@/lib/providers";
 
 const originalFetch = globalThis.fetch;
 
@@ -38,6 +38,43 @@ describe("Hetzner provider", () => {
   });
 });
 
+describe("RunPod provider", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+  });
+
+  it("creates a pod with the SSH key and resolves the forwarded SSH endpoint", async () => {
+    const requests: Array<{ method: string; path: string; body: Record<string, unknown> | null }> = [];
+    const gpuProduct = getProduct("gpu-h100-machine");
+
+    globalThis.fetch = (async (input, init) => {
+      const url = new URL(String(input));
+      const method = init?.method ?? "GET";
+      const body = init?.body ? (JSON.parse(String(init.body)) as Record<string, unknown>) : null;
+      requests.push({ method, path: url.pathname, body });
+
+      if (url.pathname === "/v1/pods" && method === "POST") {
+        return jsonResponse({ id: "pod_123" });
+      }
+      if (url.pathname === "/v1/pods/pod_123" && method === "GET") {
+        return jsonResponse({ publicIp: "203.0.113.55", portMappings: { "22": 40123 } });
+      }
+      throw new Error(`Unexpected RunPod request: ${method} ${url.pathname}`);
+    }) as typeof fetch;
+
+    const gpuLease: MachineLease = { ...lease("machine_gpu0000000000a1"), productId: "gpu-h100-machine", provider: "runpod" };
+    const provisioned = await new RunpodProvider("rp-token", gpuProduct).provision(gpuLease);
+
+    assert.equal(provisioned.providerServerId, "pod_123");
+    assert.equal(provisioned.host, "203.0.113.55");
+    assert.equal(provisioned.sshPort, 40123);
+
+    const createRequest = requests.find((request) => request.path === "/v1/pods");
+    assert.equal((createRequest?.body?.env as Record<string, string>).PUBLIC_KEY, gpuLease.sshPublicKey);
+    assert.deepEqual(createRequest?.body?.gpuTypeIds, [gpuProduct.serverType]);
+  });
+});
+
 function lease(id: string): MachineLease {
   const now = new Date().toISOString();
   return {
@@ -50,6 +87,7 @@ function lease(id: string): MachineLease {
     status: "provisioning",
     sshPublicKey: "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKey user@example",
     host: null,
+    sshPort: null,
     username: product.username,
     createdAt: now,
     expiresAt: now,

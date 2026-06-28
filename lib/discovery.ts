@@ -1,4 +1,4 @@
-import { product } from "@/lib/config";
+import { getProducts, PRODUCT_IDS, type Product } from "@/lib/config";
 import { acceptableUsePath, prohibitedUses } from "@/lib/policy";
 
 // Prefer an explicit public URL; on Vercel fall back to the deployment URL so
@@ -18,7 +18,32 @@ function resolveServiceUrl(request?: Request): string {
   return "http://localhost:3000";
 }
 
+function productDescription(entry: Product): string {
+  return entry.id === "gpu-h100-machine"
+    ? "Temporary single-GPU NVIDIA H100 machine with SSH access, provisioned on RunPod."
+    : "Temporary Ubuntu Linux VM with SSH access.";
+}
+
+// Plain-text product catalog rendered into llms.txt, one block per SKU.
+function productsCatalog(): string {
+  return Object.values(getProducts())
+    .map((entry) =>
+      [
+        `- id: ${entry.id} (${entry.label})`,
+        `  ${productDescription(entry)}`,
+        `  image: ${entry.image}`,
+        `  duration: ${entry.minDurationMinutes}-${entry.maxDurationMinutes} minutes`,
+        `  SSH username: ${entry.username}`,
+        `  pricing: $${formatCents(entry.baseFeeCents)} base + $${formatCents(entry.priceCentsPerMinute)}/minute`,
+      ].join("\n"),
+    )
+    .join("\n");
+}
+
 const checkoutGuidance = [
+  "Choose a product_id and include it in every body (validate, create, and the paid retry). Supported products: " +
+    PRODUCT_IDS.join(", ") +
+    ". Pricing and duration bounds are per product; read the products list in this manifest.",
   "Generate a UUID request_id and include it in every body. It is the idempotency key: reuse the same request_id (with an otherwise identical body) across validate, the unpaid create, and the paid retry so the same order resolves to the same payment challenge and the same order_id.",
   "Optional preflight: POST /api/machine/mpp/orders/validate with the order body to read the quote and accepted payment methods. No payment is composed and no machine is created.",
   "Use POST /api/machine/mpp/orders for purchases. Do not use POST /api/machines unless the operator explicitly enabled unpaid local/dev provisioning.",
@@ -41,7 +66,7 @@ const paymentClientGuidance = {
       "npx @stripe/link-cli mpp decode --challenge '<WWW-Authenticate Payment challenge>'",
       "npx @stripe/link-cli payment-methods list",
       "npx @stripe/link-cli spend-request create --payment-method-id <payment_method_id> --credential-type shared_payment_token --network-id <network_id_from_challenge> --amount 399 --currency usd --context '<100+ character purchase rationale shown to the owner>' --line-item 'name:60 minute bare Linux machine lease,unit_amount:399,quantity:1' --total 'type:total,display_text:Total,amount:399' --request-approval",
-      "npx @stripe/link-cli mpp pay {service_url}/api/machine/mpp/orders --spend-request-id <approved_spend_request_id> --method POST --header 'Content-Type: application/json' --data '{\"request_id\":\"<uuid>\",\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
+      "npx @stripe/link-cli mpp pay {service_url}/api/machine/mpp/orders --spend-request-id <approved_spend_request_id> --method POST --header 'Content-Type: application/json' --data '{\"request_id\":\"<uuid>\",\"product_id\":\"bare-linux-machine\",\"duration_minutes\":60,\"ssh_public_key\":\"ssh-ed25519 ...\"}'",
     ],
   },
   also_supported: [
@@ -76,7 +101,8 @@ export function agentStorefrontManifest(request?: Request) {
 
   return {
     name: "Agentic Compute Storefront",
-    description: "Lease a temporary bare Linux machine with SSH access and resource-scoped management tokens.",
+    description:
+      "Lease temporary compute — a bare Linux machine or an H100 GPU machine — with SSH access and resource-scoped management tokens. Select the SKU with product_id.",
     version: "0.1.0",
     service_url: serviceUrl,
     llms_txt_url: "/llms.txt",
@@ -93,36 +119,41 @@ export function agentStorefrontManifest(request?: Request) {
         "Terminate the machine when the task is complete.",
       ],
     },
-    products: [
-      {
-        id: product.id,
-        description: "Temporary Ubuntu Linux VM with SSH access.",
-        provider_default: product.defaultProvider,
-        server_type: product.serverType,
-        image: product.image,
-        location: product.location,
-        username: product.username,
-        duration_minutes: {
-          minimum: product.minDurationMinutes,
-          maximum: product.maxDurationMinutes,
-        },
-        request_schema: {
-          type: "object",
-          required: ["duration_minutes", "ssh_public_key"],
-          properties: {
-            duration_minutes: {
-              type: "integer",
-              minimum: product.minDurationMinutes,
-              maximum: product.maxDurationMinutes,
-            },
-            ssh_public_key: {
-              type: "string",
-              description: "SSH public key to install on the leased machine.",
-            },
+    products: Object.values(getProducts()).map((entry) => ({
+      id: entry.id,
+      label: entry.label,
+      description: productDescription(entry),
+      provider_default: entry.defaultProvider,
+      server_type: entry.serverType,
+      image: entry.image,
+      location: entry.location,
+      username: entry.username,
+      duration_minutes: {
+        minimum: entry.minDurationMinutes,
+        maximum: entry.maxDurationMinutes,
+      },
+      pricing: {
+        currency: "usd",
+        base_fee_cents: entry.baseFeeCents,
+        unit_amount_cents_per_minute: entry.priceCentsPerMinute,
+      },
+      request_schema: {
+        type: "object",
+        required: ["product_id", "duration_minutes", "ssh_public_key"],
+        properties: {
+          product_id: { type: "string", const: entry.id },
+          duration_minutes: {
+            type: "integer",
+            minimum: entry.minDurationMinutes,
+            maximum: entry.maxDurationMinutes,
+          },
+          ssh_public_key: {
+            type: "string",
+            description: "SSH public key to install on the leased machine.",
           },
         },
       },
-    ],
+    })),
     payments: {
       protocol: "mpp",
       processor: "stripe",
@@ -133,11 +164,16 @@ export function agentStorefrontManifest(request?: Request) {
       challenge_status: 402,
       idempotency_key: "request_id",
       methods: ["stripe_spt"],
-      pricing: {
-        currency: "usd",
-        base_fee_cents: Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99),
-        unit_amount_cents_per_minute: Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5),
-      },
+      pricing_by_product: Object.fromEntries(
+        Object.values(getProducts()).map((entry) => [
+          entry.id,
+          {
+            currency: "usd",
+            base_fee_cents: entry.baseFeeCents,
+            unit_amount_cents_per_minute: entry.priceCentsPerMinute,
+          },
+        ]),
+      ),
       environment: "production",
     },
     payment_client_guidance: paymentClientGuidance,
@@ -207,32 +243,26 @@ export function llmsText(request?: Request): string {
 
   return `# Agentic Compute Storefront
 
-This service leases one product: a temporary bare Linux machine.
+This service leases compute by the minute. Pick a product with product_id.
 
-Primary product:
-- id: ${product.id}
-- OS image: ${product.image}
-- provider default: ${product.defaultProvider}
-- duration: ${product.minDurationMinutes}-${product.maxDurationMinutes} minutes
-- SSH username: ${product.username}
-- region: Hetzner EU (${product.location})
+Products:
+${productsCatalog()}
 
-Pricing:
-- base fee: $${formatCents(Number(process.env.CHECKOUT_BASE_FEE_CENTS ?? 99))}
-- minute rate: $${formatCents(Number(process.env.PRICE_CENTS_PER_MINUTE ?? 5))}/minute
-
-Generate a UUID request_id and send it in every body below. It is the idempotency key: reuse the same request_id (with an identical body) across validate, create, and the paid retry. The order_id is derived from it.
+Pick a product_id from the list above and send it in every body below, along with
+a UUID request_id. request_id is the idempotency key: reuse the same request_id
+(with an identical body) across validate, create, and the paid retry. The order_id
+is derived from it. Pricing and duration bounds are per product.
 
 Optional preflight (recommended):
 POST /api/machine/mpp/orders/validate
 Content-Type: application/json
-JSON: { "request_id": "<uuid>", "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
+JSON: { "request_id": "<uuid>", "product_id": "bare-linux-machine", "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
 Returns { protocol, methods, product_type, quote, request_id } with no payment and no machine created. Reuse the same body on create.
 
 Create an order (and machine):
 POST /api/machine/mpp/orders
 Content-Type: application/json
-JSON: { "request_id": "<uuid>", "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
+JSON: { "request_id": "<uuid>", "product_id": "bare-linux-machine", "duration_minutes": 60, "ssh_public_key": "ssh-ed25519 ..." }
 
 Without a payment credential the service responds with HTTP 402, MPP payment challenges (WWW-Authenticate), and { order_id, status: "unpaid" }.
 Retry the identical body with a Stripe-backed MPP payment credential.
@@ -302,13 +332,19 @@ function formatCents(cents: number): string {
 
 export function openApiDocument(request?: Request) {
   const serviceUrl = resolveServiceUrl(request);
+  const products = Object.values(getProducts());
+  // Bounds spanning all SKUs; per-product limits are enforced server-side and
+  // advertised per product in the agent-storefront manifest.
+  const durationMin = Math.min(...products.map((entry) => entry.minDurationMinutes));
+  const durationMax = Math.max(...products.map((entry) => entry.maxDurationMinutes));
 
   return {
     openapi: "3.1.0",
     info: {
       title: "Agentic Compute Storefront API",
       version: "0.1.0",
-      description: "API for leasing and managing one temporary bare Linux machine product.",
+      description:
+        "API for leasing and managing temporary compute: a bare Linux machine or an H100 GPU machine, selected with product_id.",
     },
     servers: [{ url: serviceUrl }],
     paths: {
@@ -540,15 +576,15 @@ export function openApiDocument(request?: Request) {
       schemas: {
         Health: {
           type: "object",
-          required: ["status", "product"],
+          required: ["status", "products"],
           properties: {
             status: { type: "string", const: "ok" },
-            product: { type: "string", const: product.id },
+            products: { type: "array", items: { type: "string", enum: PRODUCT_IDS } },
           },
         },
         CreateMachineRequest: {
           type: "object",
-          required: ["request_id", "duration_minutes", "ssh_public_key"],
+          required: ["request_id", "product_id", "duration_minutes", "ssh_public_key"],
           additionalProperties: false,
           properties: {
             request_id: {
@@ -558,10 +594,16 @@ export function openApiDocument(request?: Request) {
                 "Idempotency key (UUID). Reuse the same value across validate, create, and the paid retry (with an otherwise identical body) so the same order resolves to the same payment challenge and order_id.",
               pattern: "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
             },
+            product_id: {
+              type: "string",
+              enum: PRODUCT_IDS,
+              description: "Which product to lease. Duration bounds and pricing are per product.",
+            },
             duration_minutes: {
               type: "integer",
-              minimum: product.minDurationMinutes,
-              maximum: product.maxDurationMinutes,
+              minimum: durationMin,
+              maximum: durationMax,
+              description: "Lease duration. Allowed range depends on product_id.",
             },
             ssh_public_key: {
               type: "string",
@@ -585,7 +627,7 @@ export function openApiDocument(request?: Request) {
           required: ["machine_id", "product", "provider", "status", "host", "username", "created_at", "expires_at"],
           properties: {
             machine_id: { type: "string" },
-            product: { type: "string", const: product.id },
+            product: { type: "string", enum: PRODUCT_IDS },
             provider: { type: "string" },
             status: {
               type: "string",
@@ -639,11 +681,11 @@ export function openApiDocument(request?: Request) {
             "currency",
           ],
           properties: {
-            product_id: { type: "string", const: product.id },
+            product_id: { type: "string", enum: PRODUCT_IDS },
             duration_minutes: {
               type: "integer",
-              minimum: product.minDurationMinutes,
-              maximum: product.maxDurationMinutes,
+              minimum: durationMin,
+              maximum: durationMax,
             },
             base_fee_cents: { type: "integer", minimum: 0 },
             unit_price_cents_per_minute: { type: "integer", minimum: 1 },
